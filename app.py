@@ -3,7 +3,7 @@ from openai import OpenAI
 import os
 
 app = Flask(__name__)
-client = OpenAI()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
