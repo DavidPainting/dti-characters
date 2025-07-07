@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta charset="UTF-8">
     <title>Talk with a Bible Character</title>
     <style>
@@ -14,12 +15,14 @@
         }
         .container {
             max-width: 600px;
-            margin: 0 auto;
+            width: 90%;
+            margin: 1em auto;
             background: #fff;
-            padding: 2em;
+            padding: 1.5em;
             border-radius: 8px;
             box-shadow: 0 0 8px rgba(0,0,0,0.1);
         }
+
         #portrait {
             display: none;
             max-height: 100px;
@@ -38,6 +41,7 @@
             font-size: 1em;
             border: 1px solid #ccc;
             border-radius: 4px;
+            box-sizing: border-box;
         }
         #submitBtn {
             margin-top: 1em;
@@ -47,7 +51,7 @@
             color: #fff;
             font-size: 1em;
             border: none;
-            border-radius: 4px;
+            border-radius: 6px;
             cursor: pointer;
         }
         #responseBox {
