@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -81,7 +82,7 @@
         <div id="questionArea">
             <label for="question">Your question:</label>
             <textarea id="question" rows="4"></textarea>
-            <button id="actionBtn" onclick="handleAction()">Submit</button>
+            <button id="submitBtn" onclick="askCharacter()">Submit</button>
         </div>
 
         <div id="responseBox"></div>
@@ -89,26 +90,17 @@
         <button id="downloadBtn" onclick="downloadConversation()" style="display: none; margin-top: 1em;">
             Download Conversation
         </button>
+        <button id="followupBtn" onclick="followUp()" style="display: none; margin-top: 1em;">
+            Follow-up
+        </button>
+
 
     </div>
 
     <script>
-    let conversationLog = '';
-    let lastResponse = '';
-    let followupUsed = false;
-    let hasAsked = false;
-
-    async function handleAction() {
-        if (!hasAsked) {
-            await askCharacter();
-            hasAsked = true;
-            document.getElementById("actionBtn").innerText = "Follow-up";
-        } else if (!followupUsed) {
-            await followUp();
-            followupUsed = true;
-            document.getElementById("actionBtn").style.display = "none";
-        }
-    }
+        let conversationLog = '';
+        let lastResponse = '';
+        let followupUsed = false;
 
         function onCharacterSelect() {
             const character = document.getElementById("character").value;
@@ -165,17 +157,11 @@
 
             lastResponse = data.reply;
             conversationLog += `You: ${question}\n\n${data.reply}\n\n`;
-
-            const downloadBtn = document.getElementById("downloadBtn");
-            if (downloadBtn) downloadBtn.style.display = "inline-block";
-
-            const followupBtn = document.getElementById("followupBtn");
-            if (followupBtn) followupBtn.style.display = "inline-block";
-
+            document.getElementById("downloadBtn").style.display = "inline-block";
+            document.getElementById("followupBtn").style.display = "inline-block";
             document.getElementById("question").value = "";
 
             followupUsed = false;
-
 
             tokenInfo.innerHTML = `🧾 Token usage: ${data.total_tokens} (Prompt: ${data.prompt_tokens}, Response: ${data.completion_tokens})<br>
                                    💸 Estimated cost: $${data.estimated_cost}`;
@@ -243,11 +229,7 @@
             conversationLog += `Follow-up: ${question}\n\n${data.reply}\n\n`;
             lastResponse = data.reply;
             followupUsed = true;
-
-            const actionBtn = document.getElementById("actionBtn");
-            if (actionBtn) actionBtn.style.display = "none";
-
-
+            document.getElementById("followupBtn").style.display = "none";
 
         } catch (error) {
             responseBox.innerHTML = "⚠️ Failed to contact the server.";
