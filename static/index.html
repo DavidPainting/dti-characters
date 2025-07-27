@@ -72,15 +72,18 @@
 </head>
 <body>
     <div class="container">
+        <button onclick="showInfo()" style="float: right; margin-bottom: 1em;">ℹ️ About</button>
         <h2>Talk with a Bible Character</h2>
-        <label for="character">Choose a character:</label>
-        <select id="character" onchange="onCharacterSelect()">
-            <option value="">– select –</option>
-            <option value="peter">Peter</option>
-            <option value="simeon">Simeon</option>
-            <option value="the_accused">The Accused</option>
-        </select>
+       
+        <input type="hidden" id="character" value="">
+
         <img id="portrait" src="" alt="Character portrait">
+
+        <div id="infoModal" style="display: none; position: fixed; top: 10%; left: 5%; width: 90%; max-width: 600px; background: white; padding: 1rem; border: 2px solid #ccc; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.2); z-index: 1000; overflow-y: auto; max-height: 80%;">
+          <button onclick="hideInfo()" style="float: right; background: none; border: none; font-size: 1.2rem; cursor: pointer;">✖</button>
+          <div id="infoContent" style="margin-top: 1.5rem;"></div>
+        </div>
+
 
         <div id="questionArea">
             <label for="question">Your question:</label>
@@ -93,6 +96,9 @@
         <button id="downloadBtn" onclick="downloadConversation()" style="display: none; margin-top: 1em;">
             Download Conversation
         </button>
+        <button onclick="startRecording()">🎤 Speak</button>
+        <audio id="responseAudio" controls style="display:none;"></audio>
+
 
     </div>
 
@@ -101,6 +107,79 @@
     let lastResponse = '';
     let followupUsed = false;
     let hasAsked = false;
+    let mediaRecorder, recordedChunks = [];
+
+    function showInfo() {
+      fetch("/about")
+        .then(res => res.text())
+        .then(text => {
+          document.getElementById("infoContent").innerHTML = formatMultilineText(text);
+          document.getElementById("infoModal").style.display = "block";
+        });
+    }
+
+    function hideInfo() {
+      document.getElementById("infoModal").style.display = "none";
+    }
+
+    function formatMultilineText(text) {
+      const lines = text.split(/\n+/);
+      return lines.map(line => `<p>${line.trim()}</p>`).join("");
+    }
+
+    function getUrlParam(name) {
+      const url = new URL(window.location.href);
+      return url.searchParams.get(name);
+    }
+
+    function startRecording() {
+      recordedChunks = [];
+
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = e => recordedChunks.push(e.data);
+        mediaRecorder.onstop = handleRecordingStop;
+        mediaRecorder.start();
+
+        document.getElementById("responseBox").innerHTML += `<p>🎙️ Listening for 7 seconds...</p>`;
+        setTimeout(() => mediaRecorder.stop(), 7000);
+      }).catch(err => alert("Microphone access denied."));
+    }
+
+    function handleRecordingStop() {
+      const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+      const formData = new FormData();
+      formData.append("file", blob, "voice_input.webm");
+
+      fetch("/stt", {
+        method: "POST",
+        body: formData
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (data.transcript) {
+          document.getElementById("question").value = data.transcript;
+          handleAction(); // or askCharacter() if that's preferred
+        } else {
+          alert("Could not understand the audio.");
+        }
+      });
+    }
+
+    function readAloud(text) {
+      fetch("/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: text, voice: "onyx" })
+      })
+      .then(res => res.blob())
+      .then(blob => {
+        const audio = document.getElementById("responseAudio");
+        audio.src = URL.createObjectURL(blob);
+        audio.style.display = "block";
+        audio.play();
+      });
+    }
 
     async function handleAction() {
         if (!hasAsked) {
@@ -166,6 +245,8 @@
                 .split('\n\n')
                 .map(p => `<p>${p}</p>`)
                 .join('');
+
+            readAloud(data.reply);
 
             lastResponse = data.reply;
             conversationLog += `You: ${question}\n\n${data.reply}\n\n`;
@@ -240,6 +321,7 @@
                 .split('\n\n')
                 .map(p => `<p>${p}</p>`)
                 .join('');
+            readAloud(data.reply);
             tokenInfo.innerHTML = `🧾 Token usage: ${data.total_tokens} (Prompt: ${data.prompt_tokens}, Response: ${data.completion_tokens})<br>
                                    💸 Estimated cost: $${data.estimated_cost}`;
             tokenInfo.style.display = "block";
@@ -259,6 +341,26 @@
         }
     }
  
+    window.onload = function () {
+      const charParam = getUrlParam("character");
+      const characterInput = document.getElementById("character");
+
+      console.log("[DEBUG] URL character param:", charParam);
+      console.log("[DEBUG] Hidden input element:", characterInput);
+
+      const validCharacters = ["peter", "simeon", "the_accused"]; // Add others as needed
+      const selectedCharacter = validCharacters.includes((charParam || "").toLowerCase())
+        ? charParam.toLowerCase()
+        : "the_accused";
+
+      characterInput.value = selectedCharacter;
+
+      console.log("[DEBUG] Final character selection:", selectedCharacter);
+
+      onCharacterSelect(); // Show portrait + question box etc.
+    };
+
+
 
     </script>
 </body>

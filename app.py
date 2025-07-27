@@ -17,6 +17,62 @@ def load_prompt(character):
     except FileNotFoundError:
         return None
 
+@app.route("/about")
+def about():
+    try:
+        with open("about.txt", "r", encoding="utf-8") as f:
+            content = f.read()
+        return content
+    except FileNotFoundError:
+        return "No About content found."
+
+@app.route("/stt", methods=["POST"])
+def speech_to_text():
+    from openai import OpenAI
+    import uuid
+    import os
+
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded."}), 400
+
+    file = request.files["file"]
+    os.makedirs("temp", exist_ok=True)
+    temp_filename = f"temp/input_{uuid.uuid4()}.webm"
+    file.save(temp_filename)
+
+    try:
+        client = OpenAI()
+        with open(temp_filename, "rb") as f:
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=f,
+                response_format="text"
+            )
+        return jsonify({"transcript": transcript.strip()})
+    finally:
+        os.remove(temp_filename)
+
+@app.route("/tts", methods=["POST"])
+def generate_tts():
+    from openai import OpenAI
+    from flask import Response
+
+    data = request.json
+    text = data.get("text", "")
+    voice = data.get("voice", "shimmer")
+
+    if not text:
+        return jsonify({"error": "No text provided."}), 400
+
+    client = OpenAI()
+    response = client.audio.speech.create(
+        model="tts-1",
+        voice=voice,
+        input=text
+    )
+    return Response(response.content, mimetype="audio/mpeg")
+
+
 @app.route("/")
 def index():
     return send_from_directory(os.path.join(BASE_DIR, "static"), "index.html")
