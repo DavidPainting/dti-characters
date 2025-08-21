@@ -1,367 +1,480 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta charset="UTF-8">
-    <title>Talk with a Bible Character</title>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Nunito&display=swap');
-
-        body {
-            font-family: 'Nunito', sans-serif;
-
-            background: #f9f9f9;
-            padding: 2em;
-        }
-        .container {
-            max-width: 600px;
-            width: 90%;
-            margin: 1em auto;
-            background: #fff;
-            padding: 1.5em;
-            border-radius: 8px;
-            box-shadow: 0 0 8px rgba(0,0,0,0.1);
-        }
-
-        #portrait {
-            display: none;
-            max-height: 100px;
-            border-radius: 50%;
-            margin-bottom: 1em;
-        }
-        #questionArea {
-            display: none;
-            margin-bottom: 1em;
-        }
-        textarea {
-            background: #fcfcfc;
-            width: 100%;
-            padding: 1em;
-            font-family: 'Nunito', sans-serif;
-            font-size: 1em;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            box-sizing: border-box;
-        }
-        #submitBtn {
-            margin-top: 1em;
-            padding: 0.75em;
-            width: 100%;
-            background: #333;
-            color: #fff;
-            font-size: 1em;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-        }
-        #responseBox {
-            display: none;
-            margin-top: 2em;
-            padding: 1em;
-            border: 1px solid #ccc;
-            background: #fdfdfd;
-            max-height: 300px;
-            overflow-y: auto;
-        }
-        #tokenInfo {
-            font-size: 0.9em;
-            margin-top: 0.5em;
-            color: #666;
-        }
-    </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="UTF-8" />
+  <title>Talk with a Bible Character</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Nunito&display=swap');
+    body { font-family: 'Nunito', sans-serif; background:#f9f9f9; padding:2em; }
+    .container { max-width: 680px; width: 92%; margin: 1em auto; background:#fff; padding:1.5em; border-radius: 12px; box-shadow: 0 0 8px rgba(0,0,0,.1);}
+    #portrait { display:none; max-height:100px; border-radius:50%; }
+    #questionArea { display:none; margin-bottom:1em; }
+    textarea { background:#fcfcfc; width:100%; padding:1em; font: 1em 'Nunito', sans-serif; border:1px solid #ccc; border-radius:8px; box-sizing:border-box; }
+    button.primary { margin-top:1em; padding:.75em 1em; background:#333; color:#fff; font-size:1em; border:none; border-radius:8px; cursor:pointer; }
+    #responseBox { display:none; margin-top:1em; padding:1em; border:1px solid #ddd; background:#fdfdfd; max-height:360px; overflow-y:auto; border-radius:8px;}
+    #tokenInfo { font-size:.9em; margin-top:.5em; color:#666; }
+    .system-banner { font-family: ui-sans-serif, system-ui; background:#fff6d5; border:1px solid #ffd466; padding:.75rem 1rem; border-radius:.75rem; margin:.5rem 0; }
+    .toolbar { display:flex; gap:.5rem; align-items:center; margin-bottom:.75rem; }
+    select, input[type="email"] { padding:.5em .75em; border:1px solid #ccc; border-radius:8px; }
+    .row { display:flex; gap:.5rem; align-items:center; flex-wrap: wrap; }
+    .spacer { flex:1 }
+    .muted { color:#666; font-size:.9em; }
+    .danger { background:#ffe4e6; border-color:#ffb3bd; }
+    .bubble-you { margin:.25rem 0; }
+    .bubble-you strong { color:#111; }
+    .bubble-char strong { color:#222; }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <button onclick="showInfo()" style="float: right; margin-bottom: 1em;">ℹ️ About</button>
-        <h2>Talk with a Bible Character</h2>
-       
-        <input type="hidden" id="character" value="">
-
-        <img id="portrait" src="" alt="Character portrait">
-
-        <div id="infoModal" style="display: none; position: fixed; top: 10%; left: 5%; width: 90%; max-width: 600px; background: white; padding: 1rem; border: 2px solid #ccc; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.2); z-index: 1000; overflow-y: auto; max-height: 80%;">
-          <button onclick="hideInfo()" style="float: right; background: none; border: none; font-size: 1.2rem; cursor: pointer;">✖</button>
-          <div id="infoContent" style="margin-top: 1.5rem;"></div>
-        </div>
+<div class="container">
+  <div class="row">
+    <button onclick="showInfo()" style="margin-left:auto">ℹ️ About</button>
+  </div>
+  <h2>Drawn to Imperfection</h2>
 
 
-        <div id="questionArea">
-            <label for="question">Your question:</label>
-            <textarea id="question" rows="4"></textarea>
-            <button id="actionBtn" onclick="handleAction()">Submit</button>
-        </div>
+  <!-- System voice banners -->
+  <div id="systemArea"></div>
 
-        <div id="responseBox"></div>
-        <div id="tokenInfo"></div>
-        <button id="downloadBtn" onclick="downloadConversation()" style="display: none; margin-top: 1em;">
-            Download Conversation
-        </button>
-        <button onclick="startRecording()">🎤 Speak</button>
-        <audio id="responseAudio" controls style="display:none;"></audio>
-
-
+  <!-- Character picker if none specified -->
+  <div id="picker" style="display:none; margin:.75rem 0 1rem;">
+    <div class="system-banner">Welcome! Choose who you’d like to speak with.</div>
+    <div class="toolbar">
+      <label for="characterSelect">Character</label>
+      <select id="characterSelect"></select>
+      <button class="primary" onclick="startWithCharacter()">Start</button>
     </div>
+  </div>
 
-    <script>
-    let conversationLog = '';
-    let lastResponse = '';
-    let followupUsed = false;
-    let hasAsked = false;
-    let mediaRecorder, recordedChunks = [];
+  <input type="hidden" id="character" value="" />
+  <div class="row" style="align-items:center; gap:.75rem; margin:.25rem 0 0.75rem;">
+    <img id="portrait" src="" alt="Character portrait" />
+    <h3 id="charName" class="muted" style="margin:0; display:none;"></h3>
+  </div>
 
-    function showInfo() {
-      fetch("/about")
-        .then(res => res.text())
-        .then(text => {
-          document.getElementById("infoContent").innerHTML = formatMultilineText(text);
-          document.getElementById("infoModal").style.display = "block";
-        });
+  <div id="infoModal" style="display:none; position:fixed; top:10%; left:5%; width:90%; max-width:600px; background:white; padding:1rem; border:2px solid #ccc; border-radius:10px; box-shadow:0 4px 10px rgba(0,0,0,.2); z-index:1000; overflow-y:auto; max-height:80%;">
+    <button onclick="hideInfo()" style="float:right; background:none; border:none; font-size:1.2rem; cursor:pointer;">✖</button>
+    <div id="infoContent" style="margin-top:1.5rem;"></div>
+  </div>
+
+  <div id="questionArea">
+    <label for="question">Your message:</label>
+    <textarea id="question" rows="3" placeholder="Ask anything..."></textarea>
+    <div class="row">
+      <button id="sendBtn" class="primary" onclick="sendMessage()" disabled>Send</button>
+      <div class="spacer"></div>
+      <button id="endBtn" class="primary" onclick="endConversation()" style="display:none;">End</button>
+    </div>
+  </div>
+
+  <div id="responseBox"></div>
+  <div id="tokenInfo"></div>
+
+  <div class="row" style="margin-top:.25rem;">
+    <span id="memoryIndicator" class="muted" style="display:none;">📖 Memory accessed</span>
+  </div>
+
+
+  <div class="row" style="margin-top:.5rem;">
+    <button id="downloadBtn" onclick="downloadConversation()" style="display:none;">Download Conversation</button>
+    <a id="feedbackLink" href="#" target="_blank" style="display:none; margin-left:.5rem;">Give feedback ↗</a>
+    <div class="spacer"></div>
+    <span id="whoami" class="muted"></span>
+  </div>
+
+  <audio id="responseAudio" controls style="display:none;"></audio>
+</div>
+
+<script>
+let conversationLog = '';
+let mediaRecorder, recordedChunks = [];
+let voiceMap = {};
+let transcriptId = null;
+let feedbackUrl = null;
+let capped = false;
+let pending = false;
+
+const TRIAL_NO_HOLD = true; // ← disable 'hold while thinking' audio + phrase
+
+const holdPhrases = {
+  peter: {1:"Let me think a moment...",2:"Hmm, a thoughtful question...",3:"Hold on, I'm pondering..."},
+  simeon: {1:"Give me a moment...",2:"I will consider this carefully...",3:"Let me bring this before the Lord..."},
+  the_accused: {1:"Just a second while I gather my thoughts...",2:"Let me reflect on that...",3:"This will take a moment..."}
+};
+
+function slugToTitle(slug){
+  if (!slug) return "";
+  return slug.replace(/_/g, ' ')
+             .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function systemBanner(text, isDanger=false){
+  const el = document.createElement('div');
+  el.className = 'system-banner' + (isDanger ? ' danger' : '');
+  el.innerText = text;
+  document.getElementById('systemArea').appendChild(el);
+}
+
+function showInfo() {
+  fetch("/about")
+    .then(res => res.text())
+    .then(text => {
+      document.getElementById("infoContent").innerHTML = formatMultilineText(text);
+      document.getElementById("infoModal").style.display = "block";
+    });
+}
+function hideInfo() { document.getElementById("infoModal").style.display = "none"; }
+function formatMultilineText(text){ return text.split(/\n+/).map(line => `<p>${line.trim()}</p>`).join(""); }
+function getUrlParam(name){ return new URL(window.location.href).searchParams.get(name); }
+
+function populatePickerFromVoiceMap(){
+  const sel = document.getElementById("characterSelect");
+  sel.innerHTML = "";
+
+  const keys = Object.keys(voiceMap || {});
+  keys.forEach(k=>{
+    const opt = document.createElement("option");
+    opt.value = k;
+    opt.textContent = k.replace(/_/g,' ');
+    sel.appendChild(opt);
+  });
+
+  // Live preview as the user changes selection
+  sel.onchange = (e) => {
+    const slug = e.target.value;
+    if (slug) setPortrait(slug);
+  };
+
+  // Initial preview for the first option (if any)
+  if (sel.value) setPortrait(sel.value);
+}
+
+function startWithCharacter(){
+  const slug = document.getElementById("characterSelect").value;
+  if(!slug) return;
+  document.getElementById("character").value = slug;
+  onCharacterSelect();
+  document.getElementById("picker").style.display = "none";
+}
+
+function startRecording(){
+  recordedChunks = [];
+  navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+    mediaRecorder = new MediaRecorder(stream);
+    mediaRecorder.ondataavailable = e => recordedChunks.push(e.data);
+    mediaRecorder.onstop = handleRecordingStop;
+    mediaRecorder.start();
+    document.getElementById("responseBox").innerHTML += `<p>🎙️ Listening for 7 seconds...</p>`;
+    setTimeout(() => mediaRecorder.stop(), 7000);
+  }).catch(()=> alert("Microphone access denied."));
+}
+function handleRecordingStop(){
+  const responseBox = document.getElementById("responseBox");
+  const blob = new Blob(recordedChunks, { type: 'audio/webm' });
+  const formData = new FormData();
+  formData.append("file", blob, "voice_input.webm");
+  responseBox.innerHTML += `<p>🗣️ Transcribing...</p>`;
+  responseBox.style.display = "block";
+  fetch("/stt", { method: "POST", body: formData })
+    .then(res => res.json())
+    .then(data => {
+      if (data.transcript) {
+        document.getElementById("question").value = data.transcript;
+        responseBox.innerHTML += `<p class="bubble-you"><strong>You:</strong> ${data.transcript}</p>`;
+        sendMessage();
+      } else {
+        responseBox.innerHTML += `<p class="system-banner danger">⚠️ Could not understand the audio.</p>`;
+      }
+    })
+    .catch(err => responseBox.innerHTML += `<p class="system-banner danger">⚠️ Transcription failed: ${err.message}</p>`);
+}
+
+function readAloud(text, voice = "onyx"){
+  fetch("/tts", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ text, voice })})
+    .then(res => res.blob())
+    .then(blob => {
+      const audio = document.getElementById("responseAudio");
+      audio.src = URL.createObjectURL(blob);
+      audio.style.display = "block";
+      audio.play();
+    });
+}
+
+function playHoldingAudio(characterName){
+  const clipCount = 3;
+  const idx = Math.floor(Math.random() * clipCount) + 1;
+  const holdingUrl = `/static/audio/${characterName}/hold${idx}.mp3`;
+  const a = new Audio(holdingUrl);
+  a.volume = 1.0; a.play();
+  return { audio:a, index: idx };
+}
+
+// Try common extensions; load image and only show when one succeeds
+function setPortrait(character){
+  const portrait = document.getElementById("portrait");
+  if (!character) {
+    portrait.removeAttribute("src");
+    portrait.style.display = "none";
+    return;
+  }
+  const exts = ["jpg","jpeg","png","webp"];
+  let i = 0;
+
+  function tryNext(){
+    if (i >= exts.length) {
+      portrait.removeAttribute("src");
+      portrait.style.display = "none";
+      return;
     }
-
-    function hideInfo() {
-      document.getElementById("infoModal").style.display = "none";
-    }
-
-    function formatMultilineText(text) {
-      const lines = text.split(/\n+/);
-      return lines.map(line => `<p>${line.trim()}</p>`).join("");
-    }
-
-    function getUrlParam(name) {
-      const url = new URL(window.location.href);
-      return url.searchParams.get(name);
-    }
-
-    function startRecording() {
-      recordedChunks = [];
-
-      navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-        mediaRecorder = new MediaRecorder(stream);
-        mediaRecorder.ondataavailable = e => recordedChunks.push(e.data);
-        mediaRecorder.onstop = handleRecordingStop;
-        mediaRecorder.start();
-
-        document.getElementById("responseBox").innerHTML += `<p>🎙️ Listening for 7 seconds...</p>`;
-        setTimeout(() => mediaRecorder.stop(), 7000);
-      }).catch(err => alert("Microphone access denied."));
-    }
-
-    function handleRecordingStop() {
-      const blob = new Blob(recordedChunks, { type: 'audio/webm' });
-      const formData = new FormData();
-      formData.append("file", blob, "voice_input.webm");
-
-      fetch("/stt", {
-        method: "POST",
-        body: formData
-      })
-      .then(res => res.json())
-      .then(data => {
-        if (data.transcript) {
-          document.getElementById("question").value = data.transcript;
-          handleAction(); // or askCharacter() if that's preferred
-        } else {
-          alert("Could not understand the audio.");
-        }
-      });
-    }
-
-    function readAloud(text) {
-      fetch("/tts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: text, voice: "onyx" })
-      })
-      .then(res => res.blob())
-      .then(blob => {
-        const audio = document.getElementById("responseAudio");
-        audio.src = URL.createObjectURL(blob);
-        audio.style.display = "block";
-        audio.play();
-      });
-    }
-
-    async function handleAction() {
-        if (!hasAsked) {
-            await askCharacter();
-            hasAsked = true;
-            document.getElementById("actionBtn").innerText = "Follow-up";
-        } else if (!followupUsed) {
-            await followUp();
-            followupUsed = true;
-            document.getElementById("actionBtn").style.display = "none";
-        }
-    }
-
-        function onCharacterSelect() {
-            const character = document.getElementById("character").value;
-            const portrait = document.getElementById("portrait");
-            const questionArea = document.getElementById("questionArea");
-            const responseBox = document.getElementById("responseBox");
-            const tokenInfo = document.getElementById("tokenInfo");
-
-            if (character) {
-                portrait.src = "/static/images/" + character + ".jpg";
-                portrait.style.display = "block";
-                questionArea.style.display = "block";
-                responseBox.style.display = "none";
-                tokenInfo.style.display = "none";
-            } else {
-                portrait.style.display = "none";
-                questionArea.style.display = "none";
-                responseBox.style.display = "none";
-                tokenInfo.style.display = "none";
-            }
-        }
-    async function askCharacter() {
-        const character = document.getElementById("character").value;
-        const question = document.getElementById("question").value;
-        const responseBox = document.getElementById("responseBox");
-        const tokenInfo = document.getElementById("tokenInfo");
-        responseBox.innerHTML = "⏳ Thinking...";
-        responseBox.style.display = "block";
-        tokenInfo.style.display = "none";
-
-        try {
-            const res = await fetch("/api/ask", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    character: character,
-                    user_input: question
-                })
-            });
-
-            const data = await res.json();
-
-            if (!res.ok || data.error) {
-                responseBox.innerHTML = `⚠️ ${data.error || "Something went wrong."}`;
-                return;
-            }
-
-            responseBox.innerHTML = data.reply
-                .split('\n\n')
-                .map(p => `<p>${p}</p>`)
-                .join('');
-
-            readAloud(data.reply);
-
-            lastResponse = data.reply;
-            conversationLog += `You: ${question}\n\n${data.reply}\n\n`;
-
-            const downloadBtn = document.getElementById("downloadBtn");
-            if (downloadBtn) downloadBtn.style.display = "inline-block";
-
-            const followupBtn = document.getElementById("followupBtn");
-            if (followupBtn) followupBtn.style.display = "inline-block";
-
-            document.getElementById("question").value = "";
-
-            followupUsed = false;
-
-
-            tokenInfo.innerHTML = `🧾 Token usage: ${data.total_tokens} (Prompt: ${data.prompt_tokens}, Response: ${data.completion_tokens})<br>
-                                   💸 Estimated cost: $${data.estimated_cost}`;
-            tokenInfo.style.display = "block";
-
-        } catch (error) {
-            responseBox.innerHTML = "⚠️ Failed to contact the server.";
-            console.error("Error:", error);
-        }
-    }
-       
-    function downloadConversation() {
-        const blob = new Blob([conversationLog], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'conversation.txt';
-        a.click();
-
-        URL.revokeObjectURL(url);
-    }
-
-    async function followUp() {
-        if (followupUsed) {
-            alert("You’ve already used your follow-up.");
-            return;
-        }
-
-        const character = document.getElementById("character").value;
-        const question = document.getElementById("question").value;
-        const responseBox = document.getElementById("responseBox");
-        const tokenInfo = document.getElementById("tokenInfo");
-
-        responseBox.innerHTML = "⏳ Thinking...";
-        tokenInfo.style.display = "none";
-
-        try {
-            const res = await fetch("/api/ask", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify({
-                    character: character,
-                    user_input: `This was the last thing you said:\n\n"${lastResponse}"\n\nHere is my follow-up:\n${question}`
-                })
-            });
-
-            const data = await res.json();
-
-            if (!res.ok || data.error) {
-                responseBox.innerHTML = `⚠️ ${data.error || "Something went wrong."}`;
-                return;
-            }
-
-            responseBox.innerHTML = data.reply
-                .split('\n\n')
-                .map(p => `<p>${p}</p>`)
-                .join('');
-            readAloud(data.reply);
-            tokenInfo.innerHTML = `🧾 Token usage: ${data.total_tokens} (Prompt: ${data.prompt_tokens}, Response: ${data.completion_tokens})<br>
-                                   💸 Estimated cost: $${data.estimated_cost}`;
-            tokenInfo.style.display = "block";
-
-            conversationLog += `Follow-up: ${question}\n\n${data.reply}\n\n`;
-            lastResponse = data.reply;
-            followupUsed = true;
-
-            const actionBtn = document.getElementById("actionBtn");
-            if (actionBtn) actionBtn.style.display = "none";
-
-
-
-        } catch (error) {
-            responseBox.innerHTML = "⚠️ Failed to contact the server.";
-            console.error("Error:", error);
-        }
-    }
- 
-    window.onload = function () {
-      const charParam = getUrlParam("character");
-      const characterInput = document.getElementById("character");
-
-      console.log("[DEBUG] URL character param:", charParam);
-      console.log("[DEBUG] Hidden input element:", characterInput);
-
-      const validCharacters = ["peter", "simeon", "the_accused"]; // Add others as needed
-      const selectedCharacter = validCharacters.includes((charParam || "").toLowerCase())
-        ? charParam.toLowerCase()
-        : "the_accused";
-
-      characterInput.value = selectedCharacter;
-
-      console.log("[DEBUG] Final character selection:", selectedCharacter);
-
-      onCharacterSelect(); // Show portrait + question box etc.
+    const url = `/static/images/${character}.${exts[i++]}`;
+    const probe = new Image();
+    probe.onload = () => {
+      portrait.src = url;
+      portrait.style.display = "block";
     };
+    probe.onerror = tryNext;
+    // add a cache-buster in dev so changes show immediately
+    probe.src = url + `?v=${Date.now()}`;
+  }
+
+  tryNext();
+}
 
 
+function onCharacterSelect(){
+  const character = document.getElementById("character").value;
+  const portrait = document.getElementById("portrait");
+  const questionArea = document.getElementById("questionArea");
+  const responseBox = document.getElementById("responseBox");
+  const tokenInfo = document.getElementById("tokenInfo");
 
-    </script>
+  if (character) {
+    setPortrait(character);
+    portrait.style.display = "block";
+
+    // Show character name
+    const nameEl = document.getElementById("charName");
+    if (nameEl) {
+      nameEl.textContent = slugToTitle(character);
+      nameEl.style.display = "block";
+    }
+
+    questionArea.style.display = "block";
+    responseBox.style.display = "block";
+    tokenInfo.style.display = "none";
+  } else {
+  
+    const nameEl = document.getElementById("charName");
+    if (nameEl) nameEl.style.display = "none";
+
+
+    portrait.style.display = "none";
+    questionArea.style.display = "none";
+    responseBox.style.display = "none";
+    tokenInfo.style.display = "none";
+  }
+}
+
+async function refreshWhoAmI() {
+  try {
+    const res = await fetch("/api/me");
+    const me = await res.json();
+    const who = document.getElementById("whoami");
+    if (!me.signed_in) {
+      // Fresh device: uid will be created on first message
+      who.textContent = "Saved on this device after first message";
+      return;
+    }
+    // Session exists; if there's no email, it's a device-bound guest
+    who.textContent = me.email ? `Signed in as ${me.email}` : "Saved on this device only";
+  } catch {
+    // keep quiet on network hiccups
+  }
+}
+
+
+async function sendMessage(){
+  if(capped || pending) return;
+  const character = document.getElementById("character").value;
+  const question = document.getElementById("question").value.trim();
+  if (!character || !question) return;
+
+  const responseBox = document.getElementById("responseBox");
+  const tokenInfo = document.getElementById("tokenInfo");
+  const sendBtn = document.getElementById("sendBtn");
+
+  sendBtn.disabled = true; pending = true;
+  responseBox.innerHTML += `<p class="bubble-you"><strong>You:</strong> ${question}</p>`;
+  responseBox.scrollTop = responseBox.scrollHeight;
+
+  let holdingAudio = null;
+  let holdPhrase = "";
+
+  try {
+    if (!TRIAL_NO_HOLD) {
+      const hold = playHoldingAudio(character);
+      holdingAudio = hold.audio;
+      holdPhrase = (holdPhrases[character] || {})[hold.index] || "";
+    }
+
+    const payload = { character, user_input: question };
+    if (holdPhrase) payload.hold_phrase = holdPhrase;
+
+    const res = await fetch("/api/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+
+    if (holdingAudio) { holdingAudio.pause(); holdingAudio.currentTime = 0; }
+
+
+    if (data.system_ui) {
+      // If the server reported recall ("Pulled X note(s)..."), show a tiny badge instead of a full banner
+      const recallMatch = /Pulled\s+\d+\s+note\(s\)/i.test(data.system_ui);
+      const mem = document.getElementById("memoryIndicator");
+
+      if (recallMatch && mem) {
+        mem.style.display = "inline";
+      }
+
+      // Strip the recall sentence from the banner text (keep other notices like usage warnings)
+      let bannerText = data.system_ui.replace(/Pulled\s+\d+\s+note\(s\)[^\.]*\.?\s*/i, "").trim();
+
+      if (bannerText) {
+        systemBanner(bannerText, false);
+      }
+    }
+
+    if(data.transcript_id) { transcriptId = data.transcript_id; }
+    if(data.feedback_url) {
+      feedbackUrl = data.feedback_url;
+      const link = document.getElementById('feedbackLink');
+      link.href = feedbackUrl; link.style.display = "inline-block";
+      document.getElementById("endBtn").style.display = "inline-block";
+    }
+
+    if(data.capped){
+      capped = true;
+      systemBanner("Usage cap reached. Thanks for exploring! You can still leave feedback.", true);
+      pending = false; return;
+    }
+    if(!res.ok || data.error){
+      responseBox.innerHTML += `<p class="system-banner danger">⚠️ ${data.error || "Something went wrong."}</p>`;
+      pending = false; sendBtn.disabled = false; return;
+    }
+
+    // 1) Render the character's text immediately (no dependency on audio play)
+    responseBox.innerHTML += data.reply.split('\n\n')
+      .map(p => `<p class="bubble-char"><strong>${character}:</strong> ${p}</p>`)
+      .join('');
+    responseBox.scrollTop = responseBox.scrollHeight;
+
+    // 2) Fetch TTS but DO NOT autoplay; just expose controls
+    const voice = voiceMap[character] || "onyx";
+    fetch("/tts", {
+      method:"POST",
+      headers:{ "Content-Type":"application/json" },
+      body: JSON.stringify({ text: data.reply, voice })
+    })
+    .then(r => r.blob())
+    .then(blob => {
+      const audio = document.getElementById("responseAudio");
+      audio.src = URL.createObjectURL(blob);
+      audio.style.display = "block";
+      // No autoplay here; user can press play if desired
+    });
+
+    // 3) Show tokens/cost
+    tokenInfo.innerHTML = `🧾 Tokens: ${data.total_tokens} (prompt ${data.prompt_tokens}, reply ${data.completion_tokens})<br>💸 Est. cost: $${data.estimated_cost}`;
+    tokenInfo.style.display = "block";
+
+    conversationLog += `You: ${question}\n\n${data.reply}\n\n`;
+    document.getElementById("question").value = "";
+    document.getElementById("downloadBtn").style.display = "inline-block";
+    pending = false; sendBtn.disabled = true;
+    await refreshWhoAmI();
+
+  }catch(err){
+    if(holdingAudio){ holdingAudio.pause(); holdingAudio.currentTime = 0; }
+    responseBox.innerHTML += `<p class="system-banner danger">⚠️ Failed to contact the server.</p>`;
+    pending = false; sendBtn.disabled = false;
+  }
+}
+
+function endConversation(){
+  if(feedbackUrl){ window.open(feedbackUrl, "_blank"); }
+  else { systemBanner("Thanks for chatting. We’d love your feedback.", false); }
+}
+
+function downloadConversation(){
+  const blob = new Blob([conversationLog], { type:'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'conversation.txt'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+window.onload = async function () {
+  console.log("[init] script loaded");
+  
+  // Trial setting: hide Speak
+  const speakBtn = document.getElementById("speakBtn");
+  if (speakBtn) speakBtn.style.display = "none";
+
+
+  // 1) Load voice map (with fallback so UI always renders)
+  let ok = false;
+  try {
+    const res = await fetch("/api/voice-map");
+    if (res.ok) {
+      voiceMap = await res.json();
+      ok = Object.keys(voiceMap || {}).length > 0;
+    }
+  } catch (e) {
+    console.warn("voice-map fetch failed:", e);
+  }
+  if (!ok) {
+    voiceMap = {"peter":"onyx","simeon":"echo","the_accused":"shimmer"};
+    systemBanner("Using fallback character list (voice map unavailable).", true);
+  }
+
+  // 2) Character param or picker
+  const charParam = (getUrlParam("character") || "").toLowerCase();
+  const characterInput = document.getElementById("character");
+  if (!charParam) {
+    populatePickerFromVoiceMap();
+    document.getElementById("picker").style.display = "block";
+  } else {
+    characterInput.value = charParam;
+    onCharacterSelect();
+  }
+
+  // 3) Wire send button enable/disable
+  const questionInput = document.getElementById("question");
+  const sendBtn = document.getElementById("sendBtn");
+  function setSendDisabled() {
+    const hasText = questionInput.value.trim().length > 0;
+    const hasCharacter = !!document.getElementById("character").value;
+    sendBtn.disabled = !(hasText && hasCharacter) || pending || capped;
+  }
+  questionInput.addEventListener("input", setSendDisabled);
+  setSendDisabled();
+
+  // 4) Show identity hint (guest vs signed-in)
+  await refreshWhoAmI();
+};
+
+
+function setSendDisabled() {
+  const hasText = questionInput.value.trim().length > 0;
+  const hasCharacter = !!document.getElementById("character").value;
+  sendBtn.disabled = !(hasText && hasCharacter) || pending || capped;
+}
+
+
+</script>
 </body>
 </html>

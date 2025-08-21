@@ -450,6 +450,15 @@ def send_magic_link(email_to, link_url):
 def healthz():
     return "ok", 200
 
+@app.get("/__version")
+def version():
+    import os
+    return {
+        "commit": os.getenv("RENDER_GIT_COMMIT", "local"),
+        "branch": os.getenv("RENDER_GIT_BRANCH", "?")
+    }, 200
+
+
 @app.post("/auth/start")
 def auth_start():
     data = request.get_json(force=True)
