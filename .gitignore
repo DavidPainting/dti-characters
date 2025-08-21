@@ -1,0 +1,23 @@
+# Python caches and virtual envs
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.env
+venv/
+.env/
+
+# Local DBs
+*.sqlite3
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Build tools
+dist/
+build/
+
+# Logs
+*.log
