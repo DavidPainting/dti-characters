@@ -482,6 +482,7 @@ window.onload = async function () {
   // 3) Wire send button enable/disable
   const questionInput = document.getElementById("question");
   const sendBtn = document.getElementById("sendBtn");
+
   questionInput.addEventListener("input", setSendDisabled);
   setSendDisabled();
 
@@ -490,11 +491,15 @@ window.onload = async function () {
 };
 
 
-function setSendDisabled() {
-  const hasText = questionInput.value.trim().length > 0;
+function setSendDisabled(){
+  const questionEl = document.getElementById("question");
+  const sendEl = document.getElementById("sendBtn");
+  const hasText = (questionEl?.value.trim().length || 0) > 0;
   const hasCharacter = !!document.getElementById("character").value;
-  sendBtn.disabled = !(hasText && hasCharacter) || pending || capped;
+  const disable = !(hasText && hasCharacter) || pending || capped;
+  if (sendEl) sendEl.disabled = disable;
 }
+
 
 
 </script>
