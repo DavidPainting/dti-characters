@@ -24,6 +24,7 @@
     .bubble-you { margin:.25rem 0; }
     .bubble-you strong { color:#111; }
     .bubble-char strong { color:#222; }
+    audio#responseAudio { margin-top: .75rem; }
   </style>
 </head>
 <body>
@@ -59,7 +60,6 @@
   </div>
 
   <div id="responseBox"></div>
-  <div id="tokenInfo"></div>
 
   <div id="questionArea">
     <label for="question">Your message:</label>
@@ -74,6 +74,7 @@
 
   <div class="row" style="margin-top:.25rem;">
     <span id="memoryIndicator" class="muted" style="display:none;">📖 Memory accessed</span>
+    <span id="tokenInfo" class="muted" style="display:none; margin-left:.5rem;"></span>
   </div>
 
 
@@ -308,6 +309,9 @@ async function sendMessage(){
   sendBtn.disabled = true; pending = true;
   responseBox.innerHTML += `<p class="bubble-you"><strong>You:</strong> ${question}</p>`;
   responseBox.scrollTop = responseBox.scrollHeight;
+  document.getElementById("question").value = "";
+  setSendDisabled();                 // re-evaluate button state
+  document.getElementById("question").focus();
 
   let holdingAudio = null;
   let holdPhrase = "";
@@ -393,7 +397,6 @@ async function sendMessage(){
     tokenInfo.style.display = "block";
 
     conversationLog += `You: ${question}\n\n${data.reply}\n\n`;
-    document.getElementById("question").value = "";
     document.getElementById("downloadBtn").style.display = "inline-block";
     pending = false; sendBtn.disabled = true;
     await refreshWhoAmI();

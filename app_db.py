@@ -653,7 +653,8 @@ MONTHLY_CAP_TOKENS  = int(os.getenv("MONTHLY_CAP_TOKENS", "300000"))
 HISTORY_TURNS       = int(os.getenv("HISTORY_TURNS", "12"))   # last N user/assistant pairs
 RECALL_LOOKBACK_DAYS = int(os.getenv("RECALL_LOOKBACK_DAYS", "180"))
 RECALL_MAX_SNIPPETS  = int(os.getenv("RECALL_MAX_SNIPPETS", "3"))
-FEEDBACK_URL        = os.getenv("FEEDBACK_URL", "/feedback")
+FEEDBACK_URL          =  os.getenv("FEEDBACK_URL", "https://qr1.be/ZU3E")
+
 
 # -------------------------------
 # Pricing (per 1M tokens)
