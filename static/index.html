@@ -482,11 +482,6 @@ window.onload = async function () {
   // 3) Wire send button enable/disable
   const questionInput = document.getElementById("question");
   const sendBtn = document.getElementById("sendBtn");
-  function setSendDisabled() {
-    const hasText = questionInput.value.trim().length > 0;
-    const hasCharacter = !!document.getElementById("character").value;
-    sendBtn.disabled = !(hasText && hasCharacter) || pending || capped;
-  }
   questionInput.addEventListener("input", setSendDisabled);
   setSendDisabled();
 
