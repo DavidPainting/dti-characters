@@ -655,8 +655,28 @@ RECALL_LOOKBACK_DAYS = int(os.getenv("RECALL_LOOKBACK_DAYS", "180"))
 RECALL_MAX_SNIPPETS  = int(os.getenv("RECALL_MAX_SNIPPETS", "3"))
 FEEDBACK_URL        = os.getenv("FEEDBACK_URL", "/feedback")
 
+# -------------------------------
+# Pricing (per 1M tokens)
+# -------------------------------
+INPUT_RATE        = float(os.getenv("RATE_INPUT", "2.5")) / 1_000_000
+CACHED_INPUT_RATE = float(os.getenv("RATE_CACHED_INPUT", "0.125")) / 1_000_000
+OUTPUT_RATE       = float(os.getenv("RATE_OUTPUT", "10")) / 1_000_000
+TTS_RATE          = float(os.getenv("RATE_TTS", "0.6")) / 1_000_000
+STT_RATE          = float(os.getenv("RATE_STT", "2.5")) / 1_000_000
+
+
 def cost_from_usage(usage):
-    return (usage.prompt_tokens * 0.000005) + (usage.completion_tokens * 0.000015)
+    # For now we assume no caching; cached tokens not exposed in usage
+    input_cost  = usage.prompt_tokens     * INPUT_RATE
+    output_cost = usage.completion_tokens * OUTPUT_RATE
+    return input_cost + output_cost
+
+def cost_stt(tokens):
+    return tokens * STT_RATE
+
+def cost_tts(tokens):
+    return tokens * TTS_RATE
+
 
 @app.post("/api/ask")
 def api_ask():
@@ -823,18 +843,21 @@ def api_ask():
 
     system_ui_combined = " ".join([p for p in parts if p]) or None
 
-
     return jsonify({
-        "reply": message,
-        "prompt_tokens": usage.prompt_tokens,
-        "completion_tokens": usage.completion_tokens,
-        "total_tokens": usage.total_tokens,
-        "estimated_cost": round(cost_estimate, 5),
-        "system_ui": system_ui_combined,
-        "capped": False,
-        "transcript_id": tid,
-        "feedback_url": feedback_url
-    })
+                    "reply": message,
+                    "prompt_tokens": usage.prompt_tokens,
+                    "completion_tokens": usage.completion_tokens,
+                    "total_tokens": usage.total_tokens,
+                    "estimated_cost": round(cost_estimate, 5),
+                    "system_ui": system_ui_combined,
+                   "capped": False,
+                    "transcript_id": tid,
+                    "feedback_url": feedback_url,
+                    # NEW
+                    "cumulative_tokens": totals_after["total"],
+                    "cap_tokens": MONTHLY_CAP_TOKENS
+          })
+
 
 # -------------------------------
 # End-of-session: summarise to profile + memories

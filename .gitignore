@@ -1,3 +1,6 @@
+# archive files
+/archive/
+
 # Python caches and virtual envs
 __pycache__/
 *.pyc

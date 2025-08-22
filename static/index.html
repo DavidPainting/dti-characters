@@ -58,6 +58,9 @@
     <div id="infoContent" style="margin-top:1.5rem;"></div>
   </div>
 
+  <div id="responseBox"></div>
+  <div id="tokenInfo"></div>
+
   <div id="questionArea">
     <label for="question">Your message:</label>
     <textarea id="question" rows="3" placeholder="Ask anything..."></textarea>
@@ -68,8 +71,6 @@
     </div>
   </div>
 
-  <div id="responseBox"></div>
-  <div id="tokenInfo"></div>
 
   <div class="row" style="margin-top:.25rem;">
     <span id="memoryIndicator" class="muted" style="display:none;">📖 Memory accessed</span>
@@ -388,7 +389,7 @@ async function sendMessage(){
     });
 
     // 3) Show tokens/cost
-    tokenInfo.innerHTML = `🧾 Tokens: ${data.total_tokens} (prompt ${data.prompt_tokens}, reply ${data.completion_tokens})<br>💸 Est. cost: $${data.estimated_cost}`;
+    tokenInfo.innerHTML = `🧾 Cumulative tokens this month: ${data.cumulative_tokens} / ${data.cap_tokens}`;
     tokenInfo.style.display = "block";
 
     conversationLog += `You: ${question}\n\n${data.reply}\n\n`;
@@ -404,10 +405,33 @@ async function sendMessage(){
   }
 }
 
-function endConversation(){
-  if(feedbackUrl){ window.open(feedbackUrl, "_blank"); }
-  else { systemBanner("Thanks for chatting. We’d love your feedback.", false); }
+async function endConversation(){
+  if(!transcriptId || !document.getElementById("character").value){
+    systemBanner("No active conversation to end.", false);
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/end", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        character: document.getElementById("character").value,
+        transcript_id: transcriptId
+      })
+    });
+    const data = await res.json();
+    if(data.ok){
+      systemBanner("✅ Conversation ended and saved.", false);
+      document.getElementById("endBtn").style.display = "none";
+    } else {
+      systemBanner("⚠️ Could not finalise this conversation.", true);
+    }
+  } catch (e) {
+    systemBanner("⚠️ Error contacting server to end conversation.", true);
+  }
 }
+
 
 function downloadConversation(){
   const blob = new Blob([conversationLog], { type:'text/plain' });
