@@ -231,33 +231,32 @@ def admin_usage_month():
 
 @admin_bp.get("/transcript/<tid>/export.csv")
 def admin_export_transcript(tid):
-    """CSV of a single transcript's messages, ordered oldest→newest."""
+    # Pre-check so we can still 404 cleanly
     with _readonly_session() as s:
         tr = s.query(Transcript).get(tid)
         if not tr: abort(404)
-        q = (s.query(TranscriptMessage)
-               .filter(TranscriptMessage.transcript_id == tid)
-               .order_by(TranscriptMessage.created_at.asc()))
-        def stream_csv():
-            buff = io.StringIO(); w = csv.writer(buff)
-            w.writerow(["created_at","role","usage_input","usage_output","usage_total","content"])
-            yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-            cnt = 0
-            for m in q:
+
+    def stream_csv():
+        buff = io.StringIO(); w = csv.writer(buff)
+        w.writerow(["created_at","role","usage_input","usage_output","usage_total","content"])
+        yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+
+        with _readonly_session() as s:
+            q = (s.query(TranscriptMessage)
+                   .filter(TranscriptMessage.transcript_id == tid,
+                           TranscriptMessage.role.in_(["user","assistant"]))
+                   .order_by(TranscriptMessage.created_at.asc()))
+            for m in q.yield_per(500):
                 w.writerow([
                     m.created_at.isoformat(sep=" "),
-                    m.role or "",
-                    m.usage_input or 0,
-                    m.usage_output or 0,
-                    m.usage_total or 0,
+                    m.role or "", m.usage_input or 0, m.usage_output or 0, m.usage_total or 0,
                     (m.content or "").replace("\r","").replace("\n"," \\n ")
                 ])
-                cnt += 1
-                if cnt % 500 == 0:
+                if buff.tell() > 64_000:
                     yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-            if buff.tell():
-                yield buff.getvalue()
-        return Response(stream_csv(), mimetype="text/csv")
+        if buff.tell(): yield buff.getvalue()
+    return Response(stream_csv(), mimetype="text/csv")
+
 
 # Whitelist the tables you want exportable
 _TABLES = {
@@ -271,29 +270,23 @@ _TABLES = {
 
 @admin_bp.get("/export/table/<name>.csv")
 def admin_export_table(name):
-    """CSV dump of a whitelisted table. Optional ?limit=&offset="""
-    tbl = _TABLES.get(name)
-    if not tbl: abort(404)
-    limit = min(int(request.args.get("limit", ADMIN_MAX_ROWS)), ADMIN_MAX_ROWS)
-    offset = int(request.args.get("offset", 0))
+    ...
+    def stream_csv():
+        buff = io.StringIO(); w = csv.writer(buff)
+        w.writerow(cols); yield buff.getvalue(); buff.seek(0); buff.truncate(0)
 
-    with _readonly_session() as s:
-        cols = [c.name for c in tbl.columns]
-        stmt = text(f"SELECT {', '.join(cols)} FROM {tbl.name} LIMIT :limit OFFSET :offset")
-        rs = s.execute(stmt, {"limit": limit, "offset": offset})
-
-        def stream_csv():
-            buff = io.StringIO(); w = csv.writer(buff)
-            w.writerow(cols); yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-            cnt = 0
-            for row in rs:
+        # Use a raw connection for streaming
+        from sqlalchemy import text as _text
+        with engine.connect() as conn:
+            rs = conn.execute(_text(f"SELECT {', '.join(cols)} FROM {tbl.name} LIMIT :limit OFFSET :offset"),
+                              {"limit": limit, "offset": offset})
+            for i, row in enumerate(rs, 1):
                 w.writerow([row[c] for c in cols])
-                cnt += 1
-                if cnt % 1000 == 0:
+                if i % 1000 == 0:
                     yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-            if buff.tell():
-                yield buff.getvalue()
-        return Response(stream_csv(), mimetype="text/csv")
+        if buff.tell(): yield buff.getvalue()
+    return Response(stream_csv(), mimetype="text/csv")
+
 
 app.register_blueprint(admin_bp)
 
@@ -435,6 +428,14 @@ def add_memories(s, user_id, character, transcript_id, items):
     """items: list of dicts: {kind,title,content,tags,importance,follow_up_after}"""
     count = 0
     for it in items or []:
+       
+        faa = None
+        if it.get("follow_up_after"):
+                              try:
+                                      faa = dt.datetime.fromisoformat(it["follow_up_after"])
+                              except Exception:
+                                     faa = None  # ignore unparsable dates for now
+
         m = Memory(
             id=new_id(), user_id=user_id, character=character, transcript_id=transcript_id,
             kind=(it.get("kind") or "insight")[:24],
