@@ -14,7 +14,6 @@ import csv, io
 # -------------------------------
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY") or os.urandom(32)
-app.register_blueprint(admin_bp)
 
 from werkzeug.middleware.proxy_fix import ProxyFix
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
@@ -295,6 +294,8 @@ def admin_export_table(name):
             if buff.tell():
                 yield buff.getvalue()
         return Response(stream_csv(), mimetype="text/csv")
+
+app.register_blueprint(admin_bp)
 
 # -------------------------------
 # Helpers
