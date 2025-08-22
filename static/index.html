@@ -75,6 +75,7 @@
   <div class="row" style="margin-top:.25rem;">
     <span id="memoryIndicator" class="muted" style="display:none;">📖 Memory accessed</span>
     <span id="tokenInfo" class="muted" style="display:none; margin-left:.5rem;"></span>
+    <span id="trialInfo" class="muted" style="display:none; margin-left:.5rem;"></span>
   </div>
 
 
@@ -105,6 +106,19 @@ const holdPhrases = {
   the_accused: {1:"Just a second while I gather my thoughts...",2:"Let me reflect on that...",3:"This will take a moment..."}
 };
 
+async function refreshTrial(){
+  try{
+    const res = await fetch("/api/trial");
+    if(!res.ok) return;
+    const t = await res.json();
+    const el = document.getElementById("trialInfo");
+    el.textContent = `day ${t.trial_day}/${t.trial_days_total}`;
+    el.style.display = "inline";
+  }catch(e){
+    // swallow – trial info is non-critical
+  }
+}
+
 function slugToTitle(slug){
   if (!slug) return "";
   return slug.replace(/_/g, ' ')
@@ -115,6 +129,13 @@ function systemBanner(text, isDanger=false){
   const el = document.createElement('div');
   el.className = 'system-banner' + (isDanger ? ' danger' : '');
   el.innerText = text;
+  document.getElementById('systemArea').appendChild(el);
+}
+
+function systemBannerHTML(html, isDanger=false){
+  const el = document.createElement('div');
+  el.className = 'system-banner' + (isDanger ? ' danger' : '');
+  el.innerHTML = html;
   document.getElementById('systemArea').appendChild(el);
 }
 
@@ -394,12 +415,13 @@ async function sendMessage(){
 
     // 3) Show tokens/cost
     tokenInfo.innerHTML = `🧾 Cumulative tokens this month: ${data.cumulative_tokens} / ${data.cap_tokens}`;
-    tokenInfo.style.display = "block";
+    tokenInfo.style.display = "block"; 
 
     conversationLog += `You: ${question}\n\n${data.reply}\n\n`;
     document.getElementById("downloadBtn").style.display = "inline-block";
     pending = false; sendBtn.disabled = true;
     await refreshWhoAmI();
+    await refreshTrial();
 
   }catch(err){
     if(holdingAudio){ holdingAudio.pause(); holdingAudio.currentTime = 0; }
@@ -425,11 +447,18 @@ async function endConversation(){
     });
     const data = await res.json();
     if(data.ok){
+      const character = document.getElementById("character").value;
+      const link = `${location.origin}/?character=${encodeURIComponent(character)}`;
       systemBanner("✅ Conversation ended and saved.", false);
+      systemBannerHTML(
+        `Thank you for chatting. Come back to <a href="${link}" target="_blank" rel="noopener">${slugToTitle(character)}</a> to chat some more.`,
+        false
+      );
       document.getElementById("endBtn").style.display = "none";
     } else {
       systemBanner("⚠️ Could not finalise this conversation.", true);
     }
+
   } catch (e) {
     systemBanner("⚠️ Error contacting server to end conversation.", true);
   }
@@ -488,6 +517,7 @@ window.onload = async function () {
 
   // 4) Show identity hint (guest vs signed-in)
   await refreshWhoAmI();
+  await refreshTrial();
 };
 
 

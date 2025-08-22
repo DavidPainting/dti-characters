@@ -1,13 +1,12 @@
 import os, json, uuid, datetime as dt
 import re 
-from flask import Flask, request, jsonify, send_from_directory, session
+from flask import Flask, request, jsonify, send_from_directory, session, Blueprint, Response, abort, current_app
 from itsdangerous import URLSafeSerializer, BadSignature
 from openai import OpenAI
 from flask import Blueprint, Response, abort
 from sqlalchemy import text, func
 import csv, io
-
-
+import math
 
 # -------------------------------
 # Flask setup
@@ -174,7 +173,6 @@ add_column_if_missing("users", "abuse_count", "abuse_count INTEGER NOT NULL DEFA
 add_column_if_missing("users", "is_banned",   "is_banned INTEGER NOT NULL DEFAULT 0")  # INTEGER plays nicest in SQLite
 
 
-
 # -------------------------------
 # Admin / Reporting (read-only)
 # -------------------------------
@@ -198,28 +196,72 @@ def _readonly_session():
         pass
     return s
 
+def _month_bounds(month_str: str):
+    # month_str like "2025-08"
+    y, m = map(int, month_str.split("-"))
+    start = dt.datetime(y, m, 1)
+    end = dt.datetime(y + 1, 1, 1) if m == 12 else dt.datetime(y, m + 1, 1)
+    return start, end
+
 @admin_bp.get("/ping")
 def admin_ping():
     return jsonify({"ok": True})
 
+@admin_bp.get("/list/transcripts")
+def admin_list_transcripts():
+    """Quick helper: list recent transcripts so you can grab IDs. Params: ?limit=50&user_id=&character="""
+    limit = min(int(request.args.get("limit", 50)), 500)
+    user_id = request.args.get("user_id")
+    character = request.args.get("character")
+
+    s = _readonly_session()
+    try:
+        q = s.query(
+            Transcript.id.label("id"),
+            Transcript.user_id.label("user_id"),
+            Transcript.character.label("character"),
+            Transcript.created_at.label("created_at"),
+            Transcript.token_total.label("token_total"),
+            Transcript.month_key.label("month_key"),
+        ).order_by(Transcript.created_at.desc())
+        if user_id:
+            q = q.filter(Transcript.user_id == user_id)
+        if character:
+            q = q.filter(Transcript.character == character)
+        rows = q.limit(limit).all()
+        return jsonify({"rows": [dict(r._mapping) for r in rows]})
+    finally:
+        s.close()
+
 @admin_bp.get("/usage/month")
 def admin_usage_month():
-    """Totals by user for ?month=YYYY-MM (default: current). &user_id=... &format=csv|json"""
-    month = request.args.get("month") or month_key_utc()
+    """Totals by user for ?month=YYYY-MM (default current), &user_id=.. &format=csv|json"""
+    month = request.args.get("month") or month_key_utc()  # keep your existing helper
     user_id = request.args.get("user_id")
     out_fmt = (request.args.get("format") or "json").lower()
 
-    with _readonly_session() as s:
+    # compute created_at window as a fallback
+    start, end = _month_bounds(month)
+
+    s = _readonly_session()
+    try:
         q = (s.query(
                 Transcript.user_id.label("user_id"),
                 func.coalesce(func.sum(Transcript.token_input), 0).label("token_input"),
                 func.coalesce(func.sum(Transcript.token_output), 0).label("token_output"),
                 func.coalesce(func.sum(Transcript.token_total), 0).label("token_total"),
             )
-            .filter(Transcript.month_key == month))
+            # prefer month_key match, but include rows that have matching created_at if month_key is null/different
+            .filter(
+                (Transcript.month_key == month) |
+                ((Transcript.created_at >= start) & (Transcript.created_at < end))
+            )
+        )
         if user_id:
             q = q.filter(Transcript.user_id == user_id)
         rows = q.group_by(Transcript.user_id).all()
+    finally:
+        s.close()
 
     if out_fmt == "csv":
         def gen():
@@ -227,36 +269,52 @@ def admin_usage_month():
             for r in rows:
                 yield f"{r.user_id},{r.token_input},{r.token_output},{r.token_total}\r\n"
         return Response(gen(), mimetype="text/csv")
-    return jsonify({"month": month, "rows": [dict(r._mapping) for r in rows]})
+    else:
+        return jsonify({"month": month, "rows": [dict(r._mapping) for r in rows]})
 
 @admin_bp.get("/transcript/<tid>/export.csv")
 def admin_export_transcript(tid):
-    # Pre-check so we can still 404 cleanly
-    with _readonly_session() as s:
+    """CSV of a single transcript's messages, ordered oldest→newest."""
+    # Do a quick existence check (keeps nice 404)
+    s = _readonly_session()
+    try:
         tr = s.query(Transcript).get(tid)
-        if not tr: abort(404)
+        if not tr:
+            abort(404)
+    finally:
+        s.close()
 
     def stream_csv():
         buff = io.StringIO(); w = csv.writer(buff)
         w.writerow(["created_at","role","usage_input","usage_output","usage_total","content"])
         yield buff.getvalue(); buff.seek(0); buff.truncate(0)
 
-        with _readonly_session() as s:
-            q = (s.query(TranscriptMessage)
-                   .filter(TranscriptMessage.transcript_id == tid,
-                           TranscriptMessage.role.in_(["user","assistant"]))
-                   .order_by(TranscriptMessage.created_at.asc()))
-            for m in q.yield_per(500):
-                w.writerow([
-                    m.created_at.isoformat(sep=" "),
-                    m.role or "", m.usage_input or 0, m.usage_output or 0, m.usage_total or 0,
-                    (m.content or "").replace("\r","").replace("\n"," \\n ")
-                ])
-                if buff.tell() > 64_000:
+        s2 = _readonly_session()
+        try:
+            q = (s2.query(TranscriptMessage)
+                    .filter(TranscriptMessage.transcript_id == tid)
+                    .order_by(TranscriptMessage.created_at.asc()))
+            for i, m in enumerate(q.yield_per(500), 1):
+                try:
+                    w.writerow([
+                        (m.created_at or dt.datetime.utcnow()).isoformat(sep=" "),
+                        m.role or "",
+                        m.usage_input or 0,
+                        m.usage_output or 0,
+                        m.usage_total or 0,
+                        (m.content or "").replace("\r","").replace("\n"," \\n ")
+                    ])
+                except Exception as e:
+                    current_app.logger.exception("CSV row error: %s", e)
+                if buff.tell() > 64_000 or (i % 500 == 0):
                     yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-        if buff.tell(): yield buff.getvalue()
-    return Response(stream_csv(), mimetype="text/csv")
+        finally:
+            s2.close()
 
+        if buff.tell():
+            yield buff.getvalue()
+
+    return Response(stream_csv(), mimetype="text/csv")
 
 # Whitelist the tables you want exportable
 _TABLES = {
@@ -270,22 +328,38 @@ _TABLES = {
 
 @admin_bp.get("/export/table/<name>.csv")
 def admin_export_table(name):
-    ...
+    """CSV dump of a whitelisted table. Optional ?limit=&offset="""
+    tbl = _TABLES.get(name)
+    if not tbl:
+        abort(404)
+    limit = min(int(request.args.get("limit", ADMIN_MAX_ROWS)), ADMIN_MAX_ROWS)
+    offset = int(request.args.get("offset", 0))
+    cols = [c.name for c in tbl.columns]
+
     def stream_csv():
         buff = io.StringIO(); w = csv.writer(buff)
         w.writerow(cols); yield buff.getvalue(); buff.seek(0); buff.truncate(0)
 
-        # Use a raw connection for streaming
-        from sqlalchemy import text as _text
-        with engine.connect() as conn:
-            rs = conn.execute(_text(f"SELECT {', '.join(cols)} FROM {tbl.name} LIMIT :limit OFFSET :offset"),
-                              {"limit": limit, "offset": offset})
-            for i, row in enumerate(rs, 1):
-                w.writerow([row[c] for c in cols])
-                if i % 1000 == 0:
-                    yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-        if buff.tell(): yield buff.getvalue()
+        # Stream directly from a connection
+        try:
+            with engine.connect() as conn:
+                rs = conn.execute(
+                    text(f"SELECT {', '.join(cols)} FROM {tbl.name} LIMIT :limit OFFSET :offset"),
+                    {"limit": limit, "offset": offset}
+                )
+                for i, row in enumerate(rs, 1):
+                    w.writerow([row[c] for c in cols])
+                    if buff.tell() > 64_000 or (i % 1000 == 0):
+                        yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+        except Exception as e:
+            current_app.logger.exception("table export error: %s", e)
+            abort(500, description="table export failed")
+
+        if buff.tell():
+            yield buff.getvalue()
+
     return Response(stream_csv(), mimetype="text/csv")
+
 
 
 app.register_blueprint(admin_bp)
@@ -326,6 +400,26 @@ FIXED_LINES = {
     "LEGAL_DISCLOSURE": "I cannot hold confessions of harm or intent in confidence. You must speak with appropriate authorities or a qualified professional.",
 }
 
+
+def trial_progress(sess):
+    total = int(os.getenv("SESSION_DAYS", "7"))
+    now = dt.datetime.utcnow()
+
+    if not sess or not getattr(sess, "expires_at", None) or not getattr(sess, "created_at", None):
+        # Safe defaults if session missing
+        return {"trial_day": 1, "trial_days_total": total, "days_left": total}
+
+    # Inclusive “days left”: if it expires later today, show 1 day left
+    seconds_left = (sess.expires_at - now).total_seconds()
+    days_left = max(0, math.ceil(seconds_left / 86400.0))
+
+    # Convert to “day X/total”, clamped
+    day_idx = total - days_left + 1
+    day_idx = max(1, min(total, day_idx))
+
+    return {"trial_day": day_idx, "trial_days_total": total, "days_left": days_left}
+
+
 def parse_moderation_tag(text: str):
     """
     Returns (tag|None, fixed_line_present: bool).
@@ -356,7 +450,7 @@ def ensure_guest_user():
             id=new_id(), user_id=u.id,
             created_at=dt.datetime.utcnow(),
             expires_at=dt.datetime.utcnow() + dt.timedelta(
-                days=int(os.getenv("GUEST_SESSION_DAYS", "90"))
+                days=int(os.getenv("GUEST_SESSION_DAYS", "7"))
             )
         )
         s.add(ses); s.commit()
@@ -625,7 +719,7 @@ def check_uid_param():
                 # refresh/create a web session for signed-in user
                 ses = WebSession(id=new_id(), user_id=uid,
                                  created_at=dt.datetime.utcnow(),
-                                 expires_at=dt.datetime.utcnow() + dt.timedelta(days=int(os.getenv("SESSION_DAYS","30"))))
+                                 expires_at=dt.datetime.utcnow() + dt.timedelta(days=int(os.getenv("SESSION_DAYS","7"))))
                 s.add(ses); s.commit()
                 session["sid"] = ses.id
                 session.permanent = True
@@ -682,6 +776,21 @@ def api_me():
         app.logger.exception("/api/me failed")
         # Fail soft so the UI can still render; indicates "fresh device" path
         return jsonify({"signed_in": False, "email": None}), 200
+
+@app.get("/api/trial")
+def api_trial():
+    try:
+        sid = session.get("sid")
+        sess = None
+        if sid:
+            with db() as s:
+                sess = s.query(WebSession).get(sid)
+        prog = trial_progress(sess)
+        return jsonify(prog), 200
+    except Exception:
+        app.logger.exception("/api/trial failed")
+        # fall back to default 7-day trial if anything goes wrong
+        return jsonify({"trial_day": 1, "trial_days_total": int(os.getenv("SESSION_DAYS", "7")), "days_left": int(os.getenv("SESSION_DAYS", "7"))}), 200
 
 
 # -------------------------------
