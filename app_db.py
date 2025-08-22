@@ -3,12 +3,18 @@ import re
 from flask import Flask, request, jsonify, send_from_directory, session
 from itsdangerous import URLSafeSerializer, BadSignature
 from openai import OpenAI
+from flask import Blueprint, Response, abort
+from sqlalchemy import text, func
+import csv, io
+
+
 
 # -------------------------------
 # Flask setup
 # -------------------------------
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY") or os.urandom(32)
+app.register_blueprint(admin_bp)
 
 from werkzeug.middleware.proxy_fix import ProxyFix
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
@@ -169,6 +175,126 @@ add_column_if_missing("users", "abuse_count", "abuse_count INTEGER NOT NULL DEFA
 add_column_if_missing("users", "is_banned",   "is_banned INTEGER NOT NULL DEFAULT 0")  # INTEGER plays nicest in SQLite
 
 
+
+# -------------------------------
+# Admin / Reporting (read-only)
+# -------------------------------
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN", "")
+ADMIN_MAX_ROWS = int(os.getenv("ADMIN_MAX_ROWS", "200000"))
+
+admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
+
+@admin_bp.before_request
+def _guard_admin():
+    token = request.headers.get("X-Admin-Token", "")
+    if not ADMIN_TOKEN or token != ADMIN_TOKEN:
+        abort(401)
+
+def _readonly_session():
+    s = SessionLocal()
+    try:
+        s.execute(text("PRAGMA query_only=ON"))
+        s.execute(text("PRAGMA busy_timeout=3000"))
+    except Exception:
+        pass
+    return s
+
+@admin_bp.get("/ping")
+def admin_ping():
+    return jsonify({"ok": True})
+
+@admin_bp.get("/usage/month")
+def admin_usage_month():
+    """Totals by user for ?month=YYYY-MM (default: current). &user_id=... &format=csv|json"""
+    month = request.args.get("month") or month_key_utc()
+    user_id = request.args.get("user_id")
+    out_fmt = (request.args.get("format") or "json").lower()
+
+    with _readonly_session() as s:
+        q = (s.query(
+                Transcript.user_id.label("user_id"),
+                func.coalesce(func.sum(Transcript.token_input), 0).label("token_input"),
+                func.coalesce(func.sum(Transcript.token_output), 0).label("token_output"),
+                func.coalesce(func.sum(Transcript.token_total), 0).label("token_total"),
+            )
+            .filter(Transcript.month_key == month))
+        if user_id:
+            q = q.filter(Transcript.user_id == user_id)
+        rows = q.group_by(Transcript.user_id).all()
+
+    if out_fmt == "csv":
+        def gen():
+            yield "user_id,token_input,token_output,token_total\r\n"
+            for r in rows:
+                yield f"{r.user_id},{r.token_input},{r.token_output},{r.token_total}\r\n"
+        return Response(gen(), mimetype="text/csv")
+    return jsonify({"month": month, "rows": [dict(r._mapping) for r in rows]})
+
+@admin_bp.get("/transcript/<tid>/export.csv")
+def admin_export_transcript(tid):
+    """CSV of a single transcript's messages, ordered oldest→newest."""
+    with _readonly_session() as s:
+        tr = s.query(Transcript).get(tid)
+        if not tr: abort(404)
+        q = (s.query(TranscriptMessage)
+               .filter(TranscriptMessage.transcript_id == tid)
+               .order_by(TranscriptMessage.created_at.asc()))
+        def stream_csv():
+            buff = io.StringIO(); w = csv.writer(buff)
+            w.writerow(["created_at","role","usage_input","usage_output","usage_total","content"])
+            yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+            cnt = 0
+            for m in q:
+                w.writerow([
+                    m.created_at.isoformat(sep=" "),
+                    m.role or "",
+                    m.usage_input or 0,
+                    m.usage_output or 0,
+                    m.usage_total or 0,
+                    (m.content or "").replace("\r","").replace("\n"," \\n ")
+                ])
+                cnt += 1
+                if cnt % 500 == 0:
+                    yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+            if buff.tell():
+                yield buff.getvalue()
+        return Response(stream_csv(), mimetype="text/csv")
+
+# Whitelist the tables you want exportable
+_TABLES = {
+    "users": User.__table__,
+    "sessions": WebSession.__table__,
+    "transcripts": Transcript.__table__,
+    "transcript_messages": TranscriptMessage.__table__,
+    "user_profiles": UserProfile.__table__,
+    "memories": Memory.__table__,
+}
+
+@admin_bp.get("/export/table/<name>.csv")
+def admin_export_table(name):
+    """CSV dump of a whitelisted table. Optional ?limit=&offset="""
+    tbl = _TABLES.get(name)
+    if not tbl: abort(404)
+    limit = min(int(request.args.get("limit", ADMIN_MAX_ROWS)), ADMIN_MAX_ROWS)
+    offset = int(request.args.get("offset", 0))
+
+    with _readonly_session() as s:
+        cols = [c.name for c in tbl.columns]
+        stmt = text(f"SELECT {', '.join(cols)} FROM {tbl.name} LIMIT :limit OFFSET :offset")
+        rs = s.execute(stmt, {"limit": limit, "offset": offset})
+
+        def stream_csv():
+            buff = io.StringIO(); w = csv.writer(buff)
+            w.writerow(cols); yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+            cnt = 0
+            for row in rs:
+                w.writerow([row[c] for c in cols])
+                cnt += 1
+                if cnt % 1000 == 0:
+                    yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+            if buff.tell():
+                yield buff.getvalue()
+        return Response(stream_csv(), mimetype="text/csv")
 
 # -------------------------------
 # Helpers
