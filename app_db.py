@@ -70,6 +70,8 @@ engine = create_engine(
     pool_pre_ping=True,
 )
 
+print(f"[DB] Using DB_FILE={DB_FILE} -> DB_URL={DB_URL}", flush=True)
+
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
 
@@ -284,37 +286,32 @@ def admin_export_transcript(tid):
     finally:
         s.close()
 
-    def stream_csv():
-        buff = io.StringIO(); w = csv.writer(buff)
-        w.writerow(["created_at","role","usage_input","usage_output","usage_total","content"])
-        yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+def stream_csv():
+    buff = io.StringIO(); w = csv.writer(buff)
+    w.writerow(cols); yield buff.getvalue(); buff.seek(0); buff.truncate(0)
 
-        s2 = _readonly_session()
-        try:
-            q = (s2.query(TranscriptMessage)
-                    .filter(TranscriptMessage.transcript_id == tid)
-                    .order_by(TranscriptMessage.created_at.asc()))
-            for i, m in enumerate(q.yield_per(500), 1):
-                try:
-                    w.writerow([
-                        (m.created_at or dt.datetime.utcnow()).isoformat(sep=" "),
-                        m.role or "",
-                        m.usage_input or 0,
-                        m.usage_output or 0,
-                        m.usage_total or 0,
-                        (m.content or "").replace("\r","").replace("\n"," \\n ")
-                    ])
-                except Exception as e:
-                    current_app.logger.exception("CSV row error: %s", e)
-                if buff.tell() > 64_000 or (i % 500 == 0):
+    try:
+        # 1) Quote identifiers (defensive for SQLite)
+        safe_cols = [f'"{c}" AS "{c}"' for c in cols]
+        sql = f'SELECT {", ".join(safe_cols)} FROM "{tbl.name}" LIMIT :limit OFFSET :offset'
+
+        with engine.connect() as conn:
+            rs = conn.execute(text(sql), {"limit": limit, "offset": offset})
+
+            # 2) SQLAlchemy 2.x safe row access
+            for i, row in enumerate(rs, 1):
+                m = row._mapping
+                w.writerow([m.get(c, "") for c in cols])
+
+                # 3) stream in chunks
+                if buff.tell() > 64_000 or (i % 1000 == 0):
                     yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-        finally:
-            s2.close()
 
-        if buff.tell():
-            yield buff.getvalue()
+        except Exception as e:
+            current_app.logger.exception("table export error: %s", e)
+            # 4) Surface the real error to the client (so you see it in curl/UI)
+            abort(502, f'export failed for "{tbl.name}": {e}')
 
-    return Response(stream_csv(), mimetype="text/csv")
 
 # Whitelist the tables you want exportable
 _TABLES = {
