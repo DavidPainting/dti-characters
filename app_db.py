@@ -274,47 +274,55 @@ def admin_usage_month():
     else:
         return jsonify({"month": month, "rows": [dict(r._mapping) for r in rows]})
 
-@admin_bp.get("/transcript/<tid>/export.csv")
-def admin_export_transcript(tid):
-    """CSV of a single transcript's messages, ordered oldest→newest."""
-    s = _readonly_session()
-    try:
-        tr = s.query(Transcript).get(tid)
-        if not tr:
-            abort(404, f"Transcript {tid} not found")
+@admin_bp.get("/export/table/<name>.csv")
+def admin_export_table(name):
+    """CSV dump of a whitelisted table. Optional ?limit=&offset="""
+    tbl = _TABLES.get(name)
+    if not tbl:
+        abort(404)
 
-        messages = (
-            s.query(TranscriptMessage)
-             .filter(TranscriptMessage.transcript_id == tid)
-             .order_by(TranscriptMessage.created_at.asc())
-             .all()
-        )
-    finally:
-        s.close()
+    limit = min(int(request.args.get("limit", ADMIN_MAX_ROWS)), ADMIN_MAX_ROWS)
+    offset = int(request.args.get("offset", 0))
+    cols = [c.name for c in tbl.columns]
 
-    cols = ["created_at", "role", "content", "usage_input", "usage_output", "usage_total"]
+    # Defensive quoting (SQLite-safe)
+    safe_cols = [f'"{c}" AS "{c}"' for c in cols]
+    sql = text(f'SELECT {", ".join(safe_cols)} FROM "{tbl.name}" LIMIT :limit OFFSET :offset')
+    params = {"limit": limit, "offset": offset}
 
     def stream_csv():
+        # ---- PRE-FLIGHT: run the SQL before sending any bytes ----
+        try:
+            conn = engine.connect()
+            rs = conn.execute(sql, params)
+        except Exception as e:
+            current_app.logger.exception("table export preflight error: %s", e)
+            abort(502, f'export failed for table "{tbl.name}": {e}')
+
         buff = io.StringIO()
         w = csv.writer(buff)
+        # header
         w.writerow(cols)
         yield buff.getvalue(); buff.seek(0); buff.truncate(0)
 
         try:
-            for i, msg in enumerate(messages, 1):
-                # ORM object path
-                row_vals = [getattr(msg, c, "") for c in cols]
-                w.writerow(row_vals)
-
+            for i, row in enumerate(rs, 1):
+                m = row._mapping
+                w.writerow([m.get(c, "") for c in cols])
                 if buff.tell() > 64_000 or (i % 1000 == 0):
                     yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-
-            if buff.tell():
-                yield buff.getvalue()
-
         except Exception as e:
-            current_app.logger.exception("transcript export error: %s", e)
-            abort(502, f'export failed for transcript "{tid}": {e}')
+            # Too late to change status; surface inline so the admin UI shows the cause
+            w.writerow(["__ERROR__", str(e)])
+            yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+        if buff.tell():
+            yield buff.getvalue()
 
     return Response(stream_csv(), mimetype="text/csv")
 
