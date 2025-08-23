@@ -337,45 +337,6 @@ _TABLES = {
     "memories": Memory.__table__,
 }
 
-@admin_bp.get("/export/table/<name>.csv")
-def admin_export_table(name):
-    """CSV dump of a whitelisted table. Optional ?limit=&offset="""
-    tbl = _TABLES.get(name)
-    if not tbl:
-        abort(404)
-    limit = min(int(request.args.get("limit", ADMIN_MAX_ROWS)), ADMIN_MAX_ROWS)
-    offset = int(request.args.get("offset", 0))
-    cols = [c.name for c in tbl.columns]
-
-    # Quote identifiers defensively for SQLite
-    safe_cols = [f'"{c}" AS "{c}"' for c in cols]
-    sql = text(f'SELECT {", ".join(safe_cols)} FROM "{tbl.name}" LIMIT :limit OFFSET :offset')
-
-    def stream_csv():
-        buff = io.StringIO()
-        w = csv.writer(buff)
-        w.writerow(cols)
-        yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-
-        try:
-            with engine.connect() as conn:
-                rs = conn.execute(sql, {"limit": limit, "offset": offset})
-                for i, row in enumerate(rs, 1):
-                    m = row._mapping
-                    w.writerow([m.get(c, "") for c in cols])
-                    if buff.tell() > 64_000 or (i % 1000 == 0):
-                        yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-
-            if buff.tell():
-                yield buff.getvalue()
-
-        except Exception as e:
-            current_app.logger.exception("table export error: %s", e)
-            abort(502, f'export failed for table "{tbl.name}": {e}')
-
-    return Response(stream_csv(), mimetype="text/csv")
-
-
 
 app.register_blueprint(admin_bp)
 
