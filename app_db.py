@@ -348,7 +348,8 @@ def admin_export_table(name):
                     {"limit": limit, "offset": offset}
                 )
                 for i, row in enumerate(rs, 1):
-                    w.writerow([row[c] for c in cols])
+                    m = row._mapping
+                    w.writerow([m.get(c, "") for c in cols])
                     if buff.tell() > 64_000 or (i % 1000 == 0):
                         yield buff.getvalue(); buff.seek(0); buff.truncate(0)
         except Exception as e:
