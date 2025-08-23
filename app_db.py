@@ -277,41 +277,52 @@ def admin_usage_month():
 @admin_bp.get("/transcript/<tid>/export.csv")
 def admin_export_transcript(tid):
     """CSV of a single transcript's messages, ordered oldest→newest."""
-    # Do a quick existence check (keeps nice 404)
     s = _readonly_session()
     try:
         tr = s.query(Transcript).get(tid)
         if not tr:
-            abort(404)
+            abort(404, f"Transcript {tid} not found")
+        # Pull messages oldest→newest for this transcript
+        messages = (
+            s.query(TranscriptMessage)
+             .filter(TranscriptMessage.transcript_id == tid)
+             .order_by(TranscriptMessage.created_at.asc())
+             .all()
+        )
     finally:
         s.close()
 
-def stream_csv():
-    buff = io.StringIO(); w = csv.writer(buff)
-    w.writerow(cols); yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+    # choose the columns you want to export
+    cols = ["created_at", "role", "content", "usage_input", "usage_output", "usage_total"]
 
-    try:
-        # 1) Quote identifiers (defensive for SQLite)
-        safe_cols = [f'"{c}" AS "{c}"' for c in cols]
-        sql = f'SELECT {", ".join(safe_cols)} FROM "{tbl.name}" LIMIT :limit OFFSET :offset'
+    def stream_csv():
+        buff = io.StringIO()
+        w = csv.writer(buff)
+        # header
+        w.writerow(cols)
+        yield buff.getvalue(); buff.seek(0); buff.truncate(0)
 
-        with engine.connect() as conn:
-            rs = conn.execute(text(sql), {"limit": limit, "offset": offset})
+        try:
+            for i, msg in enumerate(messages, 1):
+                # tolerate both ORM objects and Row mappings
+                m = getattr(msg, "_mapping", None)
+                if m is not None:  # Row-like
+                    row_vals = [m.get(c, "") for c in cols]
+                else:  # ORM object
+                    row_vals = [getattr(msg, c, "") for c in cols]
+                w.writerow(row_vals)
 
-            # 2) SQLAlchemy 2.x safe row access
-            for i, row in enumerate(rs, 1):
-                m = row._mapping
-                w.writerow([m.get(c, "") for c in cols])
-
-                # 3) stream in chunks
                 if buff.tell() > 64_000 or (i % 1000 == 0):
                     yield buff.getvalue(); buff.seek(0); buff.truncate(0)
 
-        except Exception as e:
-            current_app.logger.exception("table export error: %s", e)
-            # 4) Surface the real error to the client (so you see it in curl/UI)
-            abort(502, f'export failed for "{tbl.name}": {e}')
+            if buff.tell():
+                yield buff.getvalue()
 
+        except Exception as e:
+            current_app.logger.exception("transcript export error: %s", e)
+            abort(502, f'export failed for transcript "{tid}": {e}')
+
+    return Response(stream_csv(), mimetype="text/csv")
 
 # Whitelist the tables you want exportable
 _TABLES = {
@@ -333,28 +344,31 @@ def admin_export_table(name):
     offset = int(request.args.get("offset", 0))
     cols = [c.name for c in tbl.columns]
 
-    def stream_csv():
-        buff = io.StringIO(); w = csv.writer(buff)
-        w.writerow(cols); yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+    # Quote identifiers defensively for SQLite
+    safe_cols = [f'"{c}" AS "{c}"' for c in cols]
+    sql = text(f'SELECT {", ".join(safe_cols)} FROM "{tbl.name}" LIMIT :limit OFFSET :offset')
 
-        # Stream directly from a connection
+    def stream_csv():
+        buff = io.StringIO()
+        w = csv.writer(buff)
+        w.writerow(cols)
+        yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+
         try:
             with engine.connect() as conn:
-                rs = conn.execute(
-                    text(f"SELECT {', '.join(cols)} FROM {tbl.name} LIMIT :limit OFFSET :offset"),
-                    {"limit": limit, "offset": offset}
-                )
+                rs = conn.execute(sql, {"limit": limit, "offset": offset})
                 for i, row in enumerate(rs, 1):
                     m = row._mapping
                     w.writerow([m.get(c, "") for c in cols])
                     if buff.tell() > 64_000 or (i % 1000 == 0):
                         yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+
+            if buff.tell():
+                yield buff.getvalue()
+
         except Exception as e:
             current_app.logger.exception("table export error: %s", e)
-            abort(500, description="table export failed")
-
-        if buff.tell():
-            yield buff.getvalue()
+            abort(502, f'export failed for table "{tbl.name}": {e}')
 
     return Response(stream_csv(), mimetype="text/csv")
 
