@@ -282,7 +282,7 @@ def admin_export_transcript(tid):
         tr = s.query(Transcript).get(tid)
         if not tr:
             abort(404, f"Transcript {tid} not found")
-        # Pull messages oldest→newest for this transcript
+
         messages = (
             s.query(TranscriptMessage)
              .filter(TranscriptMessage.transcript_id == tid)
@@ -292,24 +292,18 @@ def admin_export_transcript(tid):
     finally:
         s.close()
 
-    # choose the columns you want to export
     cols = ["created_at", "role", "content", "usage_input", "usage_output", "usage_total"]
 
     def stream_csv():
         buff = io.StringIO()
         w = csv.writer(buff)
-        # header
         w.writerow(cols)
         yield buff.getvalue(); buff.seek(0); buff.truncate(0)
 
         try:
             for i, msg in enumerate(messages, 1):
-                # tolerate both ORM objects and Row mappings
-                m = getattr(msg, "_mapping", None)
-                if m is not None:  # Row-like
-                    row_vals = [m.get(c, "") for c in cols]
-                else:  # ORM object
-                    row_vals = [getattr(msg, c, "") for c in cols]
+                # ORM object path
+                row_vals = [getattr(msg, c, "") for c in cols]
                 w.writerow(row_vals)
 
                 if buff.tell() > 64_000 or (i % 1000 == 0):
@@ -323,6 +317,7 @@ def admin_export_transcript(tid):
             abort(502, f'export failed for transcript "{tid}": {e}')
 
     return Response(stream_csv(), mimetype="text/csv")
+
 
 # Whitelist the tables you want exportable
 _TABLES = {
