@@ -409,124 +409,40 @@ def admin_export_transcript(tid):
         s.close()
 
 
-@admin_bp.get("/export2/table/<name>.csv")
-def admin_export_table_v2(name):
+@admin_bp.get("/export-all.csv")
+def admin_export_all():
+    """Download all whitelisted tables as one CSV file."""
     _require_admin_token()
-    tbl = _TABLES.get(name)
-    if not tbl:
-        abort(404)
 
-    limit = min(int(request.args.get("limit", ADMIN_MAX_ROWS)), ADMIN_MAX_ROWS)
-    offset = int(request.args.get("offset", 0))
-    cols = [c.name for c in tbl.columns]
+    def stream_all():
+        import datetime as _dt
+        for name, tbl in _TABLES.items():
+            cols = [c.name for c in tbl.columns]
 
-    safe_cols = [f'"{c}" AS "{c}"' for c in cols]
-    sql = text(f'SELECT {", ".join(safe_cols)} FROM "{tbl.name}" LIMIT :limit OFFSET :offset')
-    params = {"limit": limit, "offset": offset}
+            # Section header
+            yield f"### {name}\r\n"
+            yield ",".join(cols) + "\r\n"
 
-    def stream_csv():
-        # --- PRE-FLIGHT: finish DB work and normalize rows to dicts ---
-        try:
+            sql = text(f'SELECT {", ".join([f"""\"{c}\"""" for c in cols])} FROM "{tbl.name}"')
             with engine.connect() as conn:
-                rs = conn.execute(sql, params)
-                # Normalize to plain dicts so we don't rely on RowMapping quirks
-                rows = list(rs.mappings())  # RowMapping supports .get()
+                for row in conn.execute(sql):
+                    vals = []
+                    for v in row:
+                        if v is None:
+                            vals.append("")
+                        elif isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
+                            vals.append(v.isoformat())
+                        else:
+                            vals.append(str(v))
+                    yield ",".join(vals) + "\r\n"
 
-        except Exception as e:
-            current_app.logger.exception("table export preflight error: %s", e)
-            abort(502, f'export failed for table "{tbl.name}": {e}')
+            # spacer between tables
+            yield "\r\n"
 
-        def _stringify(v):
-            import datetime as _dt
-            if v is None:
-                return ""
-            if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
-                # ISO is safest for CSV consumers
-                return v.isoformat()
-            return str(v)
-
-        buff = io.StringIO()
-        w = csv.writer(buff)
-
-        # Header (force to str just in case)
-        w.writerow([str(c) for c in cols])
-        yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-
-        try:
-            for i, row in enumerate(rows, 1):
-                w.writerow([_stringify(row[c]) for c in cols])
-                if buff.tell() > 64_000 or (i % 1000 == 0):
-                    yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-        except Exception as e:
-            # Too late to change status; surface an inline error row
-            w.writerow(["__ERROR__", str(e)])
-            yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-
-        if buff.tell():
-            yield buff.getvalue()  
-
-    resp = Response(stream_csv(), mimetype="text/csv")
-    resp.headers["X-Exporter-Variant"] = "preflight-v2"
+    resp = Response(stream_all(), mimetype="text/csv")
+    resp.headers["Content-Disposition"] = 'attachment; filename="all_tables.csv"'
     return resp
 
-
-@admin_bp.get("/export/table/<name>.csv")
-def admin_export_table(name):
-    """CSV dump of a whitelisted table. Optional ?limit=&offset="""
-    tbl = _TABLES.get(name)
-    if not tbl:
-        abort(404)
-
-    limit = min(int(request.args.get("limit", ADMIN_MAX_ROWS)), ADMIN_MAX_ROWS)
-    offset = int(request.args.get("offset", 0))
-    cols = [c.name for c in tbl.columns]
-
-    # Defensive quoting (SQLite-safe)
-    safe_cols = [f'"{c}" AS "{c}"' for c in cols]
-    sql = text(f'SELECT {", ".join(safe_cols)} FROM "{tbl.name}" LIMIT :limit OFFSET :offset')
-    params = {"limit": limit, "offset": offset}
-
-    def stream_csv():
-        # --- PRE-FLIGHT: finish DB work and normalize rows to dicts ---
-        try:
-            with engine.connect() as conn:
-                rs = conn.execute(sql, params)
-                # Normalize to plain dicts so we don't rely on RowMapping quirks
-                rows = list(rs.mappings())  # RowMapping supports .get()
-        except Exception as e:
-            current_app.logger.exception("table export preflight error: %s", e)
-            abort(502, f'export failed for table "{tbl.name}": {e}')
-
-        def _stringify(v):
-            import datetime as _dt
-            if v is None:
-                return ""
-            if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
-                # ISO is safest for CSV consumers
-                return v.isoformat()
-            return str(v)
-
-        buff = io.StringIO()
-        w = csv.writer(buff)
-
-        # Header (force to str just in case)
-        w.writerow([str(c) for c in cols])
-        yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-
-        try:
-            for i, row in enumerate(rows, 1):
-                w.writerow([_stringify(row[c]) for c in cols])
-                if buff.tell() > 64_000 or (i % 1000 == 0):
-                    yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-        except Exception as e:
-            # Too late to change status; surface an inline error row
-            w.writerow(["__ERROR__", str(e)])
-            yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-
-        if buff.tell():
-            yield buff.getvalue()  
-
-    return Response(stream_csv(), mimetype="text/csv")
 
 
 # Whitelist the tables you want exportable
