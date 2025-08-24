@@ -8,6 +8,7 @@ from openai import OpenAI
 from sqlalchemy import text, func
 from werkzeug.middleware.proxy_fix import ProxyFix
 import secrets
+import traceback, uuid as _uuid
 
 # -------------------------------
 # Flask setup
@@ -186,6 +187,22 @@ ADMIN_MAX_ROWS = int(os.getenv("ADMIN_MAX_ROWS", "200000"))
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
 
+# ---- Make all /admin errors self-explanatory ----
+import traceback, uuid as _uuid
+
+@admin_bp.errorhandler(Exception)
+def _admin_any_error(e):
+    cid = str(_uuid.uuid4())
+    current_app.logger.error("[ADMIN][%s] %s", cid, repr(e))
+    current_app.logger.error("[ADMIN][%s] TRACE:\n%s", cid, traceback.format_exc())
+    return jsonify({
+        "ok": False,
+        "error": "Admin endpoint failed",
+        "code": type(e).__name__,
+        "correlation_id": cid
+    }), 500
+
+
 @admin_bp.before_request
 def _guard_admin():
     token = request.headers.get("X-Admin-Token", "")
@@ -284,7 +301,19 @@ def admin_usage_month():
                 yield f"{r.user_id},{r.token_input},{r.token_output},{r.token_total}\r\n"
         return Response(gen(), mimetype="text/csv")
     else:
-        return jsonify({"month": month, "rows": [dict(r._mapping) for r in rows]})
+        # REPLACE the old one-liner return with this whole block:
+        out_rows = []
+        for r in rows:
+            try:
+                out_rows.append(dict(r._mapping))  # SA 2.x Row
+            except Exception:
+                out_rows.append({
+                    "user_id": getattr(r, "user_id", None),
+                    "token_input": getattr(r, "token_input", 0),
+                    "token_output": getattr(r, "token_output", 0),
+                    "token_total": getattr(r, "token_total", 0),
+                })
+        return jsonify({"month": month, "rows": out_rows})
 
 # --- Debug: list admin routes so we know which exporter is actually wired ---
 @admin_bp.get("/debug/routes")
