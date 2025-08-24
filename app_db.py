@@ -653,8 +653,7 @@ def merge_profile_json(old_json_str, updates_dict):
 def add_memories(s, user_id, character, transcript_id, items):
     """items: list of dicts: {kind,title,content,tags,importance,follow_up_after}"""
     count = 0
-    for it in items or []:
-       
+    for it in (items or []):
         faa = None
         if it.get("follow_up_after"):
             try:
@@ -663,17 +662,25 @@ def add_memories(s, user_id, character, transcript_id, items):
                 faa = None  # ignore unparsable dates for now
 
         m = Memory(
-            id=new_id(), user_id=user_id, character=character, transcript_id=transcript_id,
+            id=new_id(),
+            user_id=user_id,
+            character=character,
+            transcript_id=transcript_id,
             kind=(it.get("kind") or "insight")[:24],
             title=(it.get("title") or "")[:200],
             content=(it.get("content") or "").strip(),
             tags=",".join(it.get("tags") or [])[:200],
             importance=int(it.get("importance") or 2),
-            follow_up_after=faa
+            follow_up_after=faa,
+        )
+
         if m.content:
-            s.add(m); count += 1
+            s.add(m)
+            count += 1
+
     s.commit()
     return count
+
 
 def merge_user_data(s, old_uid, new_uid):
     """Move all guest-owned data to the signed-in account, then remove the guest shell."""
