@@ -396,34 +396,32 @@ def admin_export_table_v2(name):
     params = {"limit": limit, "offset": offset}
 
     def stream_csv():
-        # PRE-FLIGHT (no bytes yet)
+        # PRE-FLIGHT: finish all DB work before sending bytes
         try:
-            conn = engine.connect()
-            rs = conn.execute(sql, params)
+            with engine.connect() as conn:
+                rs = conn.execute(sql, params)
+                rows = rs.mappings().all()
         except Exception as e:
             current_app.logger.exception("table export v2 preflight error: %s", e)
             abort(502, f'export failed for table "{tbl.name}": {e}')
 
         buff = io.StringIO()
         w = csv.writer(buff)
-        # header
-        w.writerow(cols)
+        w.writerow(cols)  # header
         yield buff.getvalue(); buff.seek(0); buff.truncate(0)
 
         try:
-            for i, row in enumerate(rs.mappings(), 1):
-                w.writerow([row.get(c, "") for c in cols])
+            for i, m in enumerate(rows, 1):
+                w.writerow([m.get(c, "") for c in cols])
                 if buff.tell() > 64_000 or (i % 1000 == 0):
                     yield buff.getvalue(); buff.seek(0); buff.truncate(0)
         except Exception as e:
+            # too late to change status; surface inline
             w.writerow(["__ERROR__", str(e)])
             yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-        finally:
-            try: conn.close()
-            except Exception: pass
 
         if buff.tell():
-            yield buff.getvalue()
+            yield buff.getvalue()  
 
     resp = Response(stream_csv(), mimetype="text/csv")
     resp.headers["X-Exporter-Variant"] = "preflight-v2"
@@ -447,38 +445,31 @@ def admin_export_table(name):
     params = {"limit": limit, "offset": offset}
 
     def stream_csv():
-        # ---- PRE-FLIGHT: run the SQL before sending any bytes ----
+        # ---- PRE-FLIGHT: complete DB read before sending any bytes ----
         try:
-            conn = engine.connect()
-            rs = conn.execute(sql, params)
+            with engine.connect() as conn:
+                rs = conn.execute(sql, params)
+                rows = rs.mappings().all()
         except Exception as e:
             current_app.logger.exception("table export preflight error: %s", e)
             abort(502, f'export failed for table "{tbl.name}": {e}')
 
         buff = io.StringIO()
         w = csv.writer(buff)
-        # header
-        w.writerow(cols)
+        w.writerow(cols)  # header
         yield buff.getvalue(); buff.seek(0); buff.truncate(0)
 
         try:
-            for i, row in enumerate(rs, 1):
-                m = row._mapping
+            for i, m in enumerate(rows, 1):
                 w.writerow([m.get(c, "") for c in cols])
                 if buff.tell() > 64_000 or (i % 1000 == 0):
                     yield buff.getvalue(); buff.seek(0); buff.truncate(0)
         except Exception as e:
-            # Too late to change status; surface inline so the admin UI shows the cause
             w.writerow(["__ERROR__", str(e)])
             yield buff.getvalue(); buff.seek(0); buff.truncate(0)
-        finally:
-            try:
-                conn.close()
-            except Exception:
-                pass
 
         if buff.tell():
-            yield buff.getvalue()
+            yield buff.getvalue()    
 
     return Response(stream_csv(), mimetype="text/csv")
 
