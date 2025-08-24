@@ -430,7 +430,8 @@ def admin_export_table_v2(name):
             with engine.connect() as conn:
                 rs = conn.execute(sql, params)
                 # Normalize to plain dicts so we don't rely on RowMapping quirks
-                rows = [dict(r) for r in rs.mappings()]
+                rows = list(rs.mappings())  # RowMapping supports .get()
+
         except Exception as e:
             current_app.logger.exception("table export preflight error: %s", e)
             abort(502, f'export failed for table "{tbl.name}": {e}')
@@ -491,7 +492,7 @@ def admin_export_table(name):
             with engine.connect() as conn:
                 rs = conn.execute(sql, params)
                 # Normalize to plain dicts so we don't rely on RowMapping quirks
-                rows = [dict(r) for r in rs.mappings()]
+                rows = list(rs.mappings())  # RowMapping supports .get()
         except Exception as e:
             current_app.logger.exception("table export preflight error: %s", e)
             abort(502, f'export failed for table "{tbl.name}": {e}')
