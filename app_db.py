@@ -454,7 +454,7 @@ def admin_export_table_v2(name):
 
         try:
             for i, row in enumerate(rows, 1):
-                w.writerow([_stringify(row.get(c)) for c in cols])
+                w.writerow([_stringify(row[c]) for c in cols])
                 if buff.tell() > 64_000 or (i % 1000 == 0):
                     yield buff.getvalue(); buff.seek(0); buff.truncate(0)
         except Exception as e:
@@ -515,7 +515,7 @@ def admin_export_table(name):
 
         try:
             for i, row in enumerate(rows, 1):
-                w.writerow([_stringify(row.get(c)) for c in cols])
+                w.writerow([_stringify(row[c]) for c in cols])
                 if buff.tell() > 64_000 or (i % 1000 == 0):
                     yield buff.getvalue(); buff.seek(0); buff.truncate(0)
         except Exception as e:
