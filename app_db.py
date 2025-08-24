@@ -285,7 +285,7 @@ def admin_usage_month():
             # prefer month_key match, but include rows that have matching created_at if month_key is null/different
             .filter(
                 (Transcript.month_key == month) |
-                ((Transcript.created_at >= start) & (Transcript.created_at < end))
+                ((Transcript.started_at >= start) & (Transcript.started_at < end))
             )
         )
         if user_id:
