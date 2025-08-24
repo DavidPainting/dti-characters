@@ -425,27 +425,39 @@ def admin_export_table_v2(name):
     params = {"limit": limit, "offset": offset}
 
     def stream_csv():
-        # PRE-FLIGHT: finish all DB work before sending bytes
+        # --- PRE-FLIGHT: finish DB work and normalize rows to dicts ---
         try:
             with engine.connect() as conn:
                 rs = conn.execute(sql, params)
-                rows = rs.mappings().all()
+                # Normalize to plain dicts so we don't rely on RowMapping quirks
+                rows = [dict(r) for r in rs.mappings()]
         except Exception as e:
-            current_app.logger.exception("table export v2 preflight error: %s", e)
+            current_app.logger.exception("table export preflight error: %s", e)
             abort(502, f'export failed for table "{tbl.name}": {e}')
+
+        def _stringify(v):
+            import datetime as _dt
+            if v is None:
+                return ""
+            if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
+                # ISO is safest for CSV consumers
+                return v.isoformat()
+            return str(v)
 
         buff = io.StringIO()
         w = csv.writer(buff)
-        w.writerow(cols)  # header
+
+        # Header (force to str just in case)
+        w.writerow([str(c) for c in cols])
         yield buff.getvalue(); buff.seek(0); buff.truncate(0)
 
         try:
-            for i, m in enumerate(rows, 1):
-                w.writerow([m.get(c, "") for c in cols])
+            for i, row in enumerate(rows, 1):
+                w.writerow([_stringify(row.get(c)) for c in cols])
                 if buff.tell() > 64_000 or (i % 1000 == 0):
                     yield buff.getvalue(); buff.seek(0); buff.truncate(0)
         except Exception as e:
-            # too late to change status; surface inline
+            # Too late to change status; surface an inline error row
             w.writerow(["__ERROR__", str(e)])
             yield buff.getvalue(); buff.seek(0); buff.truncate(0)
 
@@ -474,31 +486,44 @@ def admin_export_table(name):
     params = {"limit": limit, "offset": offset}
 
     def stream_csv():
-        # ---- PRE-FLIGHT: complete DB read before sending any bytes ----
+        # --- PRE-FLIGHT: finish DB work and normalize rows to dicts ---
         try:
             with engine.connect() as conn:
                 rs = conn.execute(sql, params)
-                rows = rs.mappings().all()
+                # Normalize to plain dicts so we don't rely on RowMapping quirks
+                rows = [dict(r) for r in rs.mappings()]
         except Exception as e:
             current_app.logger.exception("table export preflight error: %s", e)
             abort(502, f'export failed for table "{tbl.name}": {e}')
 
+        def _stringify(v):
+            import datetime as _dt
+            if v is None:
+                return ""
+            if isinstance(v, (_dt.datetime, _dt.date, _dt.time)):
+                # ISO is safest for CSV consumers
+                return v.isoformat()
+            return str(v)
+
         buff = io.StringIO()
         w = csv.writer(buff)
-        w.writerow(cols)  # header
+
+        # Header (force to str just in case)
+        w.writerow([str(c) for c in cols])
         yield buff.getvalue(); buff.seek(0); buff.truncate(0)
 
         try:
-            for i, m in enumerate(rows, 1):
-                w.writerow([m.get(c, "") for c in cols])
+            for i, row in enumerate(rows, 1):
+                w.writerow([_stringify(row.get(c)) for c in cols])
                 if buff.tell() > 64_000 or (i % 1000 == 0):
                     yield buff.getvalue(); buff.seek(0); buff.truncate(0)
         except Exception as e:
+            # Too late to change status; surface an inline error row
             w.writerow(["__ERROR__", str(e)])
             yield buff.getvalue(); buff.seek(0); buff.truncate(0)
 
         if buff.tell():
-            yield buff.getvalue()    
+            yield buff.getvalue()  
 
     return Response(stream_csv(), mimetype="text/csv")
 
