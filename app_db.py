@@ -1,39 +1,37 @@
 import os, json, uuid, datetime as dt
 import re 
+import csv, io
+import math
 from flask import Flask, request, jsonify, send_from_directory, session, Blueprint, Response, abort, current_app
 from itsdangerous import URLSafeSerializer, BadSignature
 from openai import OpenAI
-from flask import Blueprint, Response, abort
 from sqlalchemy import text, func
-import csv, io
-import math
+from werkzeug.middleware.proxy_fix import ProxyFix
+import secrets
 
 # -------------------------------
 # Flask setup
 # -------------------------------
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY") or os.urandom(32)
 
-from werkzeug.middleware.proxy_fix import ProxyFix
+
+
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)
 
+# Single source of truth for the secret
+SECRET = os.getenv("APP_SECRET") or os.getenv("SECRET_KEY") or secrets.token_bytes(32)
+app.secret_key = SECRET
+
+# Allow local override of cookie security if you’re testing over http://
+COOKIE_SECURE = (os.getenv("COOKIE_SECURE", "true").lower() in ("1","true","yes"))
+
 app.config.update(
-    SESSION_COOKIE_SECURE=True,      # HTTPS on Render
+    SESSION_COOKIE_SECURE=COOKIE_SECURE,   # True on Render (HTTPS), set COOKIE_SECURE=false for local http
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_HTTPONLY=True,
     PREFERRED_URL_SCHEME="https",
-)
-
-app.secret_key = os.getenv("APP_SECRET", "change-me")
-
-
-# NEW: persistent cookie + sane defaults
-import datetime as _dt
-app.config.update(
-    SESSION_COOKIE_SECURE=False,                  # True in prod over HTTPS
-    SESSION_COOKIE_SAMESITE="Lax",
-    PERMANENT_SESSION_LIFETIME=_dt.timedelta(
-        days=int(os.getenv("COOKIE_DAYS", "180"))
+    PERMANENT_SESSION_LIFETIME=dt.timedelta(
+        days=int(os.getenv("COOKIE_DAYS", "7"))  # or "180" if you prefer longer
     ),
 )
 
@@ -41,9 +39,15 @@ app.config.update(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 STATIC_DIR = os.path.join(BASE_DIR, "static")
 
-# Character → voice map
-with open(os.path.join(BASE_DIR, 'character_voice_config.json'), encoding='utf-8') as f:
-    CHARACTER_VOICE_MAP = json.load(f)
+# Character → voice map (optional)
+try:
+    with open(os.path.join(BASE_DIR, 'character_voice_config.json'), encoding='utf-8') as f:
+        CHARACTER_VOICE_MAP = json.load(f)
+except FileNotFoundError:
+    # Safe fallback so the UI and /api/voice-map continue to work
+    CHARACTER_VOICE_MAP = {
+        "peter": "onyx", "simeon": "echo", "the_accused": "shimmer"
+    }
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 signer = URLSafeSerializer(app.secret_key, salt="auth")
@@ -56,7 +60,6 @@ from sqlalchemy import (
     DateTime, ForeignKey, func, or_, and_
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
-import os
 
 # Path to the SQLite file (Render Disk recommended: /var/data/dti.sqlite3)
 DB_FILE = os.getenv("DB_FILE", os.path.join(os.path.dirname(__file__), "local.sqlite3"))
@@ -189,6 +192,15 @@ def _guard_admin():
     if not ADMIN_TOKEN or token != ADMIN_TOKEN:
         abort(401)
 
+def _require_admin_token():
+    """
+    Debug routes call this explicitly. It just mirrors the before_request guard,
+    so you can also use it in ad-hoc checks or unit tests.
+    """
+    token = request.headers.get("X-Admin-Token", "")
+    if not ADMIN_TOKEN or token != ADMIN_TOKEN:
+        abort(401)
+
 def _readonly_session():
     s = SessionLocal()
     try:
@@ -222,10 +234,10 @@ def admin_list_transcripts():
             Transcript.id.label("id"),
             Transcript.user_id.label("user_id"),
             Transcript.character.label("character"),
-            Transcript.created_at.label("created_at"),
+            Transcript.started_at.label("started_at"),
             Transcript.token_total.label("token_total"),
             Transcript.month_key.label("month_key"),
-        ).order_by(Transcript.created_at.desc())
+        ).order_by(Transcript.started_at.desc())
         if user_id:
             q = q.filter(Transcript.user_id == user_id)
         if character:
@@ -273,6 +285,150 @@ def admin_usage_month():
         return Response(gen(), mimetype="text/csv")
     else:
         return jsonify({"month": month, "rows": [dict(r._mapping) for r in rows]})
+
+# --- Debug: list admin routes so we know which exporter is actually wired ---
+@admin_bp.get("/debug/routes")
+def admin_debug_routes():
+    _require_admin_token()
+    from flask import current_app
+    rules = []
+    for r in current_app.url_map.iter_rules():
+        if str(r.rule).startswith("/admin/"):
+            rules.append({
+                "rule": str(r.rule),
+                "endpoint": r.endpoint,
+                "methods": sorted(m for m in r.methods if m in ("GET","POST"))
+            })
+    return jsonify({"routes": rules}), 200
+
+# --- Debug: DB check — driver, table list, counts, columns (no streaming) ---
+@admin_bp.get("/debug/dbcheck")
+def admin_debug_dbcheck():
+    _require_admin_token()
+    import sqlalchemy
+    info = {"sqlalchemy_version": sqlalchemy.__version__, "db_url": DB_URL}
+    try:
+        with engine.connect() as conn:
+            # List tables (SQLite path); ignore errors for non-SQLite
+            try:
+                res = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY 1"))
+                info["sqlite_master_tables"] = [row[0] for row in res]
+            except Exception as e:
+                info["sqlite_master_tables_error"] = str(e)
+
+            # Whitelist column names
+            info["columns"] = {name: [c.name for c in tbl.columns] for name, tbl in _TABLES.items()}
+
+            # Row counts per whitelisted table
+            counts = {}
+            for name, tbl in _TABLES.items():
+                try:
+                    counts[name] = conn.execute(text(f'SELECT COUNT(*) AS c FROM "{tbl.name}"')).scalar_one()
+                except Exception as e:
+                    counts[name] = f"ERROR: {e}"
+            info["counts"] = counts
+    except Exception as e:
+        info["preflight_error"] = str(e)
+    return jsonify(info), 200
+
+@admin_bp.get("/transcript/<tid>/export.csv")
+def admin_export_transcript(tid):
+    """
+    Stream a single transcript's messages as CSV for the admin console.
+    Headers:
+      id,transcript_id,role,created_at,usage_input,usage_output,usage_total,content
+    """
+    _require_admin_token()
+    s = _readonly_session()
+    try:
+        tr = s.query(Transcript).get(tid)
+        if not tr:
+            abort(404, f"Transcript {tid} not found")
+
+        q = (s.query(TranscriptMessage)
+               .filter(TranscriptMessage.transcript_id == tid)
+               .order_by(TranscriptMessage.created_at.asc()))
+
+        def gen():
+            buff = io.StringIO()
+            w = csv.writer(buff)
+            w.writerow([
+                "id","transcript_id","role","created_at",
+                "usage_input","usage_output","usage_total","content"
+            ])
+            yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+
+            for m in q:
+                content = (m.content or "").replace("\r", " ").replace("\n", "\\n")
+                w.writerow([
+                    m.id, m.transcript_id, m.role,
+                    (m.created_at.isoformat() if m.created_at else ""),
+                    int(m.usage_input or 0), int(m.usage_output or 0), int(m.usage_total or 0),
+                    content
+                ])
+                if buff.tell() > 64_000:
+                    yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+
+            if buff.tell():
+                yield buff.getvalue()
+
+        resp = Response(gen(), mimetype="text/csv")
+        resp.headers["Content-Disposition"] = f'attachment; filename="transcript_{tid}.csv"'
+        resp.headers["X-Exporter-Variant"] = "transcript-v1"
+        return resp
+    finally:
+        s.close()
+
+
+@admin_bp.get("/export2/table/<name>.csv")
+def admin_export_table_v2(name):
+    _require_admin_token()
+    tbl = _TABLES.get(name)
+    if not tbl:
+        abort(404)
+
+    limit = min(int(request.args.get("limit", ADMIN_MAX_ROWS)), ADMIN_MAX_ROWS)
+    offset = int(request.args.get("offset", 0))
+    cols = [c.name for c in tbl.columns]
+
+    safe_cols = [f'"{c}" AS "{c}"' for c in cols]
+    sql = text(f'SELECT {", ".join(safe_cols)} FROM "{tbl.name}" LIMIT :limit OFFSET :offset')
+    params = {"limit": limit, "offset": offset}
+
+    def stream_csv():
+        # PRE-FLIGHT (no bytes yet)
+        try:
+            conn = engine.connect()
+            rs = conn.execute(sql, params)
+        except Exception as e:
+            current_app.logger.exception("table export v2 preflight error: %s", e)
+            abort(502, f'export failed for table "{tbl.name}": {e}')
+
+        buff = io.StringIO()
+        w = csv.writer(buff)
+        # header
+        w.writerow(cols)
+        yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+
+        try:
+            for i, row in enumerate(rs.mappings(), 1):
+                w.writerow([row.get(c, "") for c in cols])
+                if buff.tell() > 64_000 or (i % 1000 == 0):
+                    yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+        except Exception as e:
+            w.writerow(["__ERROR__", str(e)])
+            yield buff.getvalue(); buff.seek(0); buff.truncate(0)
+        finally:
+            try: conn.close()
+            except Exception: pass
+
+        if buff.tell():
+            yield buff.getvalue()
+
+    resp = Response(stream_csv(), mimetype="text/csv")
+    resp.headers["X-Exporter-Variant"] = "preflight-v2"
+    return resp
+
 
 @admin_bp.get("/export/table/<name>.csv")
 def admin_export_table(name):
@@ -501,10 +657,10 @@ def add_memories(s, user_id, character, transcript_id, items):
        
         faa = None
         if it.get("follow_up_after"):
-                              try:
-                                      faa = dt.datetime.fromisoformat(it["follow_up_after"])
-                              except Exception:
-                                     faa = None  # ignore unparsable dates for now
+            try:
+                faa = dt.datetime.fromisoformat(it["follow_up_after"])
+            except Exception:
+                faa = None  # ignore unparsable dates for now
 
         m = Memory(
             id=new_id(), user_id=user_id, character=character, transcript_id=transcript_id,
@@ -513,8 +669,7 @@ def add_memories(s, user_id, character, transcript_id, items):
             content=(it.get("content") or "").strip(),
             tags=",".join(it.get("tags") or [])[:200],
             importance=int(it.get("importance") or 2),
-            follow_up_after=dt.datetime.fromisoformat(it["follow_up_after"]) if it.get("follow_up_after") else None
-        )
+            follow_up_after=faa
         if m.content:
             s.add(m); count += 1
     s.commit()
@@ -718,16 +873,17 @@ def logout():
     session.clear()
     return jsonify({"ok": True})
 
-@app.post("/stt")
-def stt_stub():
-    return jsonify({"transcript": ""})
+if os.getenv("ENABLE_TTS_STUBS", "").lower() in ("1","true","yes"):
+    @app.post("/stt")
+    def stt_stub():
+        return jsonify({"transcript": ""})
 
-@app.post("/tts")
-def tts_stub():
-    from flask import send_file
-    # Return an empty WAV/MP3 to keep UI happy or a small generated tone.
-    # For now, just 204:
-    return ("", 204)
+    @app.post("/tts")
+    def tts_stub():
+        from flask import send_file
+        # Return an empty WAV/MP3 to keep UI happy or a small generated tone.
+        # For now, just 204:
+        return ("", 204)
 
 
 @app.get("/api/me")
