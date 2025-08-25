@@ -408,6 +408,17 @@ def admin_export_transcript(tid):
     finally:
         s.close()
 
+@admin_bp.post("/ban/<uid>")
+def admin_ban(uid):
+    _require_admin_token()
+    with db() as s:
+        u = s.query(User).get(uid)
+        if not u:
+            abort(404, "User not found")
+        u.is_banned = True
+        s.commit()
+        return {"ok": True, "user_id": uid, "is_banned": True}
+
 
 @admin_bp.get("/export-all.csv")
 def admin_export_all():
